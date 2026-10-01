@@ -43,6 +43,7 @@ void TitleScene::Initialize() {
     transformResource_->Map(0, nullptr, reinterpret_cast<void**>(&transformData_));
     transformData_->WVP = MakeIdentity4x4();
     transformData_->World = MakeIdentity4x4();
+    transformData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
     directionalLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
     directionalLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData_));
@@ -86,7 +87,7 @@ void TitleScene::Update() {
                 SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
             }
         } else {
-            // スペースキーでゲームプレイシーンへ遷移（演出開始）
+            // スペースキー押下でブースト加速演出を開始
             if (input_->IsKeyTriggered(DIK_SPACE)) {
                 isTransitioningToGame_ = true;
                 transitionTimer_ = 0.0f;
@@ -99,10 +100,13 @@ void TitleScene::Update() {
 }
 
 void TitleScene::Draw() {
-    // 1. 背景ゲームシーンの描画
+    // 1. 背景ゲームシーンの描画（ブースト演出中の飛行含む）
     if (gameplayScene_) {
         gameplayScene_->Draw();
     }
+
+    // ブースト演出中はタイトルロゴ（赤文字「巣喰う街」）を非表示にしてスッキリ見せる
+    if (isTransitioningToGame_) return;
 
     ID3D12GraphicsCommandList* commandList = DirectXCommon::GetInstance()->GetCommandList();
     D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = DirectXCommon::GetInstance()->GetDsvHandle();

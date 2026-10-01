@@ -60,6 +60,7 @@ void Sprite::Initialize(const std::string& textureName, Vector2 position) {
     wvpResource_->Map(0, nullptr, reinterpret_cast<void**>(&wvpData_));
     wvpData_->WVP = MakeIdentity4x4();
     wvpData_->World = MakeIdentity4x4();
+    wvpData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
     // 初期トランスフォーム
     transform = { {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f}, {position.x, position.y, 0.0f} };

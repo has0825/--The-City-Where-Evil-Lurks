@@ -8,6 +8,7 @@ std::wstring ConvertString(const std::string& str);
 
 Microsoft::WRL::ComPtr<ID3D12Resource> CreateBufferResource(ID3D12Device* device, size_t sizeInBytes)
 {
+    if (!device || sizeInBytes == 0) return nullptr;
     D3D12_HEAP_PROPERTIES uploadHeapProperties{};
     uploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC vertexResourceDesc{};
@@ -20,7 +21,9 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateBufferResource(ID3D12Device* device
     vertexResourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexResource = nullptr;
     HRESULT hr = device->CreateCommittedResource(&uploadHeapProperties, D3D12_HEAP_FLAG_NONE, &vertexResourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexResource));
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr) || !vertexResource) {
+        return nullptr;
+    }
     return vertexResource;
 }
 

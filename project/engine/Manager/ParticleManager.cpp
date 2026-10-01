@@ -34,6 +34,7 @@ static Vector3 Normalize(const Vector3& v) {
 }
 
 void ParticleManager::Initialize(ID3D12Device* device) {
+    if (!device) return;
     device_ = device;
 
     std::random_device seedGenerator;
@@ -43,16 +44,20 @@ void ParticleManager::Initialize(ID3D12Device* device) {
     // 1. 通常/回転パーティクル用 (最大2000インスタンス)
     // ---------------------------------------------------------
     instancingResource_ = CreateBufferResource(device_, sizeof(ParticleForGPU) * kNumInstances);
-    instancingResource_->Map(0, nullptr, reinterpret_cast<void**>(&instancingData_));
+    if (instancingResource_) {
+        instancingResource_->Map(0, nullptr, reinterpret_cast<void**>(&instancingData_));
+    }
 
     uint32_t instancingSrvIndex = SrvManager::GetInstance()->Allocate();
     instancingSrvHandleGPU_ = SrvManager::GetInstance()->GetGPUDescriptorHandle(instancingSrvIndex);
-    SrvManager::GetInstance()->CreateSRVforStructuredBuffer(
-        instancingSrvIndex, 
-        instancingResource_.Get(), 
-        kNumInstances, 
-        sizeof(ParticleForGPU)
-    );
+    if (instancingResource_) {
+        SrvManager::GetInstance()->CreateSRVforStructuredBuffer(
+            instancingSrvIndex, 
+            instancingResource_.Get(), 
+            kNumInstances, 
+            sizeof(ParticleForGPU)
+        );
+    }
 
     particles_.resize(kNumInstances);
     for (uint32_t i = 0; i < kNumInstances; ++i) {
@@ -64,16 +69,20 @@ void ParticleManager::Initialize(ID3D12Device* device) {
     // 2. リングパーティクル用 (最大100インスタンス)
     // ---------------------------------------------------------
     ringInstancingResource_ = CreateBufferResource(device_, sizeof(ParticleForGPU) * kRingInstanceCount);
-    ringInstancingResource_->Map(0, nullptr, reinterpret_cast<void**>(&ringInstancingData_));
+    if (ringInstancingResource_) {
+        ringInstancingResource_->Map(0, nullptr, reinterpret_cast<void**>(&ringInstancingData_));
+    }
 
     uint32_t ringSrvIndex = SrvManager::GetInstance()->Allocate();
     ringInstancingSrvHandleGPU_ = SrvManager::GetInstance()->GetGPUDescriptorHandle(ringSrvIndex);
-    SrvManager::GetInstance()->CreateSRVforStructuredBuffer(
-        ringSrvIndex, 
-        ringInstancingResource_.Get(), 
-        kRingInstanceCount, 
-        sizeof(ParticleForGPU)
-    );
+    if (ringInstancingResource_) {
+        SrvManager::GetInstance()->CreateSRVforStructuredBuffer(
+            ringSrvIndex, 
+            ringInstancingResource_.Get(), 
+            kRingInstanceCount, 
+            sizeof(ParticleForGPU)
+        );
+    }
 
     ringParticles_.resize(kRingInstanceCount);
     for (uint32_t i = 0; i < kRingInstanceCount; ++i) {
@@ -85,16 +94,20 @@ void ParticleManager::Initialize(ID3D12Device* device) {
     // 3. シリンダーパーティクル用 (最大50インスタンス)
     // ---------------------------------------------------------
     cylinderInstancingResource_ = CreateBufferResource(device_, sizeof(ParticleForGPU) * kCylinderInstanceCount);
-    cylinderInstancingResource_->Map(0, nullptr, reinterpret_cast<void**>(&cylinderInstancingData_));
+    if (cylinderInstancingResource_) {
+        cylinderInstancingResource_->Map(0, nullptr, reinterpret_cast<void**>(&cylinderInstancingData_));
+    }
 
     uint32_t cylinderSrvIndex = SrvManager::GetInstance()->Allocate();
     cylinderInstancingSrvHandleGPU_ = SrvManager::GetInstance()->GetGPUDescriptorHandle(cylinderSrvIndex);
-    SrvManager::GetInstance()->CreateSRVforStructuredBuffer(
-        cylinderSrvIndex, 
-        cylinderInstancingResource_.Get(), 
-        kCylinderInstanceCount, 
-        sizeof(ParticleForGPU)
-    );
+    if (cylinderInstancingResource_) {
+        SrvManager::GetInstance()->CreateSRVforStructuredBuffer(
+            cylinderSrvIndex, 
+            cylinderInstancingResource_.Get(), 
+            kCylinderInstanceCount, 
+            sizeof(ParticleForGPU)
+        );
+    }
 
     cylinderParticles_.resize(kCylinderInstanceCount);
     for (uint32_t i = 0; i < kCylinderInstanceCount; ++i) {

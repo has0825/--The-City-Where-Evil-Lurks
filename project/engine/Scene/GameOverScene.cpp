@@ -70,16 +70,19 @@ void GameOverScene::Initialize() {
     transformResource_->Map(0, nullptr, reinterpret_cast<void**>(&transformData_));
     transformData_->WVP = MakeIdentity4x4();
     transformData_->World = MakeIdentity4x4();
+    transformData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
     playerTransformResource_ = CreateBufferResource(device, sizeof(TransformationMatrix));
     playerTransformResource_->Map(0, nullptr, reinterpret_cast<void**>(&playerTransformData_));
     playerTransformData_->WVP = MakeIdentity4x4();
     playerTransformData_->World = MakeIdentity4x4();
+    playerTransformData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
     floorTransformResource_ = CreateBufferResource(device, sizeof(TransformationMatrix));
     floorTransformResource_->Map(0, nullptr, reinterpret_cast<void**>(&floorTransformData_));
     floorTransformData_->WVP = MakeIdentity4x4();
     floorTransformData_->World = MakeIdentity4x4();
+    floorTransformData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
     directionalLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
     directionalLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData_));

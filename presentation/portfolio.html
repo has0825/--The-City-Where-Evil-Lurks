@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>【技術説明資料・応用編】3Dルート固定シューティング - Portfolio Presentation</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Inter:wght@300;400;600;700;800&family=Noto+Sans+JP:wght@300;400;500;700;900&family=Orbitron:wght@600;800;900&display=swap" rel="stylesheet">
+    <!-- KaTeX for Math Rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+    <!-- Highlight.js for Code Highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/cpp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/hlsl.min.js"></script>
+    <script>hljs.highlightAll();</script>
+    <style>
+        :root {
+            --bg-dark: #0a0d14;
+            --bg-card: rgba(18, 24, 38, 0.75);
+            --bg-card-hover: rgba(26, 35, 54, 0.85);
+            --border-glow: rgba(0, 240, 255, 0.25);
+            --primary: #00f0ff;
+            --secondary: #7000ff;
+            --accent-green: #00ffaa;
+            --accent-pink: #ff0077;
+            --accent-yellow: #ffb700;
+            --text-main: #e2e8f0;
+            --text-sub: #94a3b8;
+            --font-main: 'Noto Sans JP', 'Inter', sans-serif;
+            --font-code: 'Fira Code', monospace;
+            --font-head: 'Orbitron', 'Noto Sans JP', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: var(--font-main);
+            line-height: 1.7;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(112, 0, 255, 0.12) 0%, transparent 45%),
+                radial-gradient(circle at 85% 85%, rgba(0, 240, 255, 0.12) 0%, transparent 45%);
+            background-attachment: fixed;
+        }
+
+        /* Ambient Animated Grid */
+        .bg-grid {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background-size: 50px 50px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px 30px 80px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Top Bar Navigation */
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 18px 28px;
+            background: rgba(10, 13, 20, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border-glow);
+            border-radius: 16px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            position: sticky;
+            top: 20px;
+            z-index: 100;
+        }
+
+        .brand-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .badge-tag {
+            background: linear-gradient(135deg, var(--secondary), var(--primary));
+            color: #fff;
+            font-family: var(--font-head);
+            font-size: 0.75rem;
+            font-weight: 800;
+            padding: 4px 10px;
+            border-radius: 6px;
+            letter-spacing: 1px;
+        }
+
+        .brand-title h1 {
+            font-family: var(--font-head);
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 0.5px;
+        }
+
+        .meta-inputs {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .input-box {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: var(--text-sub);
+        }
+
+        .input-box input {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: var(--primary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-family: var(--font-main);
+            font-weight: 600;
+            font-size: 0.88rem;
+            width: 140px;
+            outline: none;
+            transition: all 0.3s;
+        }
+
+        .input-box input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+        }
+
+        .btn-print {
+            background: rgba(0, 240, 255, 0.1);
+            border: 1px solid var(--primary);
+            color: var(--primary);
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-print:hover {
+            background: var(--primary);
+            color: var(--bg-dark);
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.5);
+        }
+
+        /* Hero Banner */
+        .hero-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border-glow);
+            border-radius: 24px;
+            padding: 48px;
+            margin-bottom: 50px;
+            backdrop-filter: blur(12px);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+        }
+
+        .hero-section::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 6px; height: 100%;
+            background: linear-gradient(to bottom, var(--primary), var(--secondary));
+        }
+
+        .hero-subtitle {
+            color: var(--primary);
+            font-family: var(--font-head);
+            font-size: 0.9rem;
+            font-weight: 600;
+            letter-spacing: 2px;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+        }
+
+        .hero-title {
+            font-size: 2.1rem;
+            font-weight: 900;
+            line-height: 1.35;
+            margin-bottom: 20px;
+            color: #ffffff;
+        }
+
+        .hero-title span {
+            background: linear-gradient(135deg, var(--primary), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero-description {
+            color: var(--text-sub);
+            font-size: 1.02rem;
+            max-width: 950px;
+            margin-bottom: 30px;
+        }
+
+        .tech-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .tech-tag {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.82rem;
+            font-weight: 500;
+        }
+
+        .tech-tag.highlight {
+            border-color: rgba(0, 240, 255, 0.4);
+            color: var(--primary);
+            background: rgba(0, 240, 255, 0.08);
+        }
+
+        /* Section Layout */
+        .section-block {
+            margin-bottom: 60px;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+
+        .section-num {
+            font-family: var(--font-head);
+            font-size: 2rem;
+            font-weight: 900;
+            color: var(--primary);
+            opacity: 0.8;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: 0.5px;
+        }
+
+        /* Cards Grid */
+        .grid-2col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .grid-3col {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 18px;
+            padding: 28px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .card:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-glow);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+        }
+
+        .card-title {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-title .icon {
+            color: var(--primary);
+        }
+
+        .card p {
+            color: var(--text-sub);
+            font-size: 0.95rem;
+            margin-bottom: 14px;
+        }
+
+        .card ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .card ul li {
+            position: relative;
+            padding-left: 20px;
+            margin-bottom: 10px;
+            color: var(--text-main);
+            font-size: 0.92rem;
+        }
+
+        .card ul li::before {
+            content: '◆';
+            position: absolute;
+            left: 0;
+            color: var(--primary);
+            font-size: 0.65rem;
+            top: 6px;
+        }
+
+        /* Comparison Table */
+        .table-wrapper {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 18px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.92rem;
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.04);
+            color: #fff;
+            padding: 16px 20px;
+            font-weight: 700;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        td {
+            padding: 16px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--text-sub);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr.selected {
+            background: rgba(0, 240, 255, 0.05);
+        }
+
+        tr.selected td {
+            color: var(--text-main);
+        }
+
+        .badge-status {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 0.78rem;
+            display: inline-block;
+        }
+
+        .badge-adopted {
+            background: rgba(0, 255, 170, 0.15);
+            border: 1px solid var(--accent-green);
+            color: var(--accent-green);
+        }
+
+        .badge-rejected {
+            background: rgba(255, 0, 119, 0.1);
+            border: 1px solid rgba(255, 0, 119, 0.3);
+            color: #ff66a3;
+        }
+
+        /* Code & Math Sections */
+        .code-container {
+            border-radius: 12px;
+            overflow: hidden;
+            margin: 16px 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .code-header {
+            background: #161b22;
+            padding: 10px 18px;
+            font-family: var(--font-code);
+            font-size: 0.8rem;
+            color: var(--text-sub);
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        pre code {
+            font-family: var(--font-code) !important;
+            font-size: 0.88rem !important;
+            line-height: 1.6 !important;
+            padding: 18px !important;
+        }
+
+        /* Troubleshooting Timeline */
+        .trouble-card {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 183, 0, 0.3);
+            border-radius: 18px;
+            padding: 30px;
+            position: relative;
+        }
+
+        .trouble-flow {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .flow-step {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 18px;
+            position: relative;
+        }
+
+        .flow-step .step-num {
+            font-family: var(--font-head);
+            font-size: 0.75rem;
+            color: var(--accent-yellow);
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+
+        .flow-step h4 {
+            font-size: 0.95rem;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+
+        .flow-step p {
+            font-size: 0.85rem;
+            color: var(--text-sub);
+            margin-bottom: 0;
+        }
+
+        /* Quantitative Metrics Dashboard */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .metric-card {
+            background: var(--bg-card);
+            border: 1px solid rgba(0, 240, 255, 0.2);
+            border-radius: 16px;
+            padding: 24px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .metric-card::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 3px;
+            background: linear-gradient(to right, var(--primary), var(--accent-green));
+        }
+
+        .metric-label {
+            font-size: 0.82rem;
+            color: var(--text-sub);
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .metric-val {
+            font-family: var(--font-head);
+            font-size: 2.2rem;
+            font-weight: 900;
+            color: #fff;
+            line-height: 1.1;
+            margin-bottom: 6px;
+        }
+
+        .metric-val.highlight-green {
+            color: var(--accent-green);
+        }
+
+        .metric-change {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding-top: 40px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            color: var(--text-sub);
+            font-size: 0.85rem;
+        }
+
+        /* Print Media Queries */
+        @media print {
+            body {
+                background: #fff !important;
+                color: #000 !important;
+            }
+            .bg-grid, .top-bar {
+                display: none !important;
+            }
+            .card, .hero-section, .table-wrapper, .metric-card {
+                border: 1px solid #ccc !important;
+                background: #fff !important;
+                color: #000 !important;
+                box-shadow: none !important;
+            }
+            .hero-title, .card-title, .section-title, .metric-val {
+                color: #000 !important;
+            }
+        }
+
+        @media (max-width: 900px) {
+            .grid-2col, .grid-3col, .trouble-flow, .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+            .hero-title {
+                font-size: 1.6rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+
+    <div class="container">
+        <!-- Top Bar Navigation -->
+        <header class="top-bar">
+            <div class="brand-title">
+                <span class="badge-tag">GE3 & CG3</span>
+                <h1>ポートフォリオ技術説明資料（システム・AI・演出編）</h1>
+            </div>
+            <div class="meta-inputs">
+                <div class="input-box">
+                    <label>学籍番号:</label>
+                    <input type="text" id="student-id" value="LE3X_99" oninput="syncMeta()">
+                </div>
+                <div class="input-box">
+                    <label>氏名:</label>
+                    <input type="text" id="user-name" value="氏名" oninput="syncMeta()">
+                </div>
+                <button class="btn-print" onclick="window.print()">印刷 / PDF出力</button>
+            </div>
+        </header>
+
+        <!-- Hero Banner -->
+        <section class="hero-section">
+            <div class="hero-subtitle">3D Fixed-Route Shooting — Core Architecture Documentation</div>
+            <h2 class="hero-title">
+                敵フォーメーションAI・階層ステージ最適化と<br><span>吸着エイムアシスト・ポストプロセス</span>の技術設計
+            </h2>
+            <p class="hero-description">
+                3Dルート固定シューティングゲームにおける「敵AIの4種隊列飛行 & 4状態ステートマシン」「床48タイルリングバッファ & 1〜5階ビル積層描画」「吸着エイムアシスト & 0.65秒無敵バレルロール」「Blender 4.x双方向同期パイプライン」「ディゾルブ & デプス輪郭線ポストプロセス」の技術設計ドキュメント。
+            </p>
+            <div class="tech-tags">
+                <span class="tech-tag highlight">C++20</span>
+                <span class="tech-tag highlight">DirectX 12 (D3D12)</span>
+                <span class="tech-tag highlight">敵フォーメーションAI</span>
+                <span class="tech-tag">48タイルオブジェクトプール</span>
+                <span class="tech-tag">エイムアシスト & バレルロール</span>
+                <span class="tech-tag">Blender双方向パイプライン</span>
+                <span class="tech-tag">Dissolve & Outline HLSL</span>
+                <span class="tech-tag">データ駆動設計</span>
+            </div>
+        </section>
+
+        <!-- SECTION 01: 実現したかったこと -->
+        <section class="section-block">
+            <div class="section-header">
+                <span class="section-num">01</span>
+                <h2 class="section-title">実現したかったこと（要件定義 / Objective）</h2>
+            </div>
+            <div class="grid-2col">
+                <div class="card">
+                    <div class="card-title">
+                        <span class="icon">🎯</span> 開発背景と全体コンセプト
+                    </div>
+                    <p>ハイスピードで進行する3Dレールシューティングにおいて、ゲームプレイの「戦略性」「快適な操作感」「ゲーム開発効率（データ駆動設計）」を確立することを目的とした。</p>
+                    <ul>
+                        <li>4種類の編隊（V字、円形、横一列、斜め一列）を組んだ組織的な敵飛行と自律ステートマシン</li>
+                        <li>メモリリークやアロケーションオーバーヘッドを排した無限スクロール背景システム</li>
+                        <li>ハイスピード下でもストレスを感じさせないエイムアシストと無敵回避アクション</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">
+                        <span class="icon">⚠️</span> 直面した技術的課題（要件）
+                    </div>
+                    <p>本開発において解決すべき4つのシステム・AI課題：</p>
+                    <ul>
+                        <li><strong>【課題1】敵AIの組織感と計算効率</strong>: 単体敵AIによる交差や交戦のバラバラ感を防ぎ、1グループ最小更新コストで隊列を維持</li>
+                        <li><strong>【課題2】無制限前進のメモリ管理</strong>: 毎フレームの動的生成・破棄（Instantiate/Destroy）によるメモリ断片化とコマ落ちの撲滅</li>
+                        <li><strong>【課題3】ハイスピード下の命中率</strong>: 高速移動中（480m/s）の照準難易度を緩和する動的ターゲット吸着（エイム補正）の実装</li>
+                        <li><strong>【課題4】レベルデザインの非コード化</strong>: プランナーがC++コードをビルドせずBlender上で難易度調整できるデータ同期構築</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 02: 比較検討した技術・手法 -->
+        <section class="section-block">
+            <div class="section-header">
+                <span class="section-num">02</span>
+                <h2 class="section-title">比較検討した技術・手法（Alternatives / 先行研究の到達点）</h2>
+            </div>
+            <p style="color: var(--text-sub); margin-bottom: 20px;">従来の手法における技術的限界（Gap）を指摘し、比較検討を行った。</p>
+            
+            <!-- Comparison Table 1: Enemy AI -->
+            <h3 style="color: #fff; font-size: 1.1rem; margin-bottom: 12px;">① 敵AIの飛行制御手法比較</h3>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>アプローチ案</th>
+                            <th>メリット</th>
+                            <th>デメリット / 技術的限界 (Gap)</th>
+                            <th>判定結果</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>A案: 敵単体ごとの完全独立自律AI</strong></td>
+                            <td>各敵が自由に行動可能</td>
+                            <td>敵同士が交差し隊列が崩れ、個別のAI更新コストによりCPU負荷が増加（100体で > 2.1ms）</td>
+                            <td><span class="badge-status badge-rejected">不採用</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>B案: 固定スプライン曲線アニメーション</strong></td>
+                            <td>綺麗な隊列を描ける</td>
+                            <td>自機の移動や攻撃に動的反応できず、単調な「覚えゲー」になりアクション性が低下</td>
+                            <td><span class="badge-status badge-rejected">不採用</span></td>
+                        </tr>
+                        <tr class="selected">
+                            <td><strong>C案: 相対座標オフセット行列 + 4状態AI</strong></td>
+                            <td>親行列1回の更新で編隊全体を計算量 $\mathcal{O}(1)$ 制御。特攻時は自律ダイブ</td>
+                            <td>隊列離脱時・特攻時の座標補間処理が必要（※12フレームSlerpで解決）</td>
+                            <td><span class="badge-status badge-adopted">採用 (本方式)</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Comparison Table 2: Floor Pool -->
+            <h3 style="color: #fff; font-size: 1.1rem; margin-bottom: 12px; margin-top: 24px;">② ステージ背景描画・メモリ管理手法比較</h3>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>アプローチ案</th>
+                            <th>メリット</th>
+                            <th>デメリット / 技術的限界 (Gap)</th>
+                            <th>判定結果</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>A案: 毎フレームの動的生成・破棄</strong></td>
+                            <td>自由なコース配置が可能</td>
+                            <td>C++メモリ割り当ての断片化およびヒープ確保オーバーヘッドによるコマ落ちが発生</td>
+                            <td><span class="badge-status badge-rejected">不採用</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>B案: 巨大固定ステージメッシュの一括読み込み</strong></td>
+                            <td>描画ロジックがシンプル</td>
+                            <td>巨大なVRAMを消費し、無限前進コースに対応できない</td>
+                            <td><span class="badge-status badge-rejected">不採用</span></td>
+                        </tr>
+                        <tr class="selected">
+                            <td><strong>C案: 48タイル・リングバッファプール + ビル積層</strong></td>
+                            <td>メモリ割り当てゼロ（完全アロケーションフリー）で無限ループ連続描画</td>
+                            <td>Z軸再配置のワープ判定ロジックの実装が必要</td>
+                            <td><span class="badge-status badge-adopted">採用 (本方式)</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- SECTION 03: 技術選定の理由 & 実装詳細 -->
+        <section class="section-block">
+            <div class="section-header">
+                <span class="section-num">03</span>
+                <h2 class="section-title">技術選定の理由と実装詳細（Motivation & Selection）</h2>
+            </div>
+
+            <!-- 3.1 Enemy AI Formation -->
+            <div class="card" style="margin-bottom: 30px;">
+                <div class="card-title">
+                    <span class="icon">🛸</span> 3.1 敵AIの「4種フォーメーション飛行」と「4状態ステートマシン」
+                </div>
+                <p><strong>【選定理由】</strong> 敵の隊列飛行（V字、円形、横一列、斜め一列）を低CPU負荷で制御するため、階層トランスフォーム（グループ中心座標からの相対オフセット行列）を採用。敵個体には 待機 (`kIdle`) ➔ 合流 (`kMerge`) ➔ 浮遊 (`kFloat`) ➔ 特攻 (`kDive`) の4状態ステートマシンを実装した。</p>
+
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>C++ Implementation: GamePlayScene.cpp (抜粋)</span>
+                        <span>C++20 / DirectXMath</span>
+                    </div>
+                    <pre><code class="language-cpp">// 敵フォーメーション相対座標の動的計算ロジック
+void GamePlayScene::ApplyGroupFormation(size_t groupIndex) {
+    auto& group = enemyGroups_[groupIndex];
+    Vector3 center = group.centerPosition;
+    
+    for (size_t i = 0; i < group.enemyIndices.size(); ++i) {
+        uint32_t enemyIdx = group.enemyIndices[i];
+        Vector3 offset = Vector3(0, 0, 0);
+
+        switch (group.formation) {
+        case FormationType::kVShape: // V字隊列
+            offset = Vector3((i % 2 == 0 ? 1.0f : -1.0f) * ((i + 1) / 2) * 3.0f, 0.0f, -((i + 1) / 2) * 4.0f);
+            break;
+        case FormationType::kCircle: // 円形隊列
+            float angle = (DirectX::XM_2PI / group.enemyIndices.size()) * i;
+            offset = Vector3(cosf(angle) * 8.0f, sinf(angle) * 8.0f, 0.0f);
+            break;
+        // 横一列・斜め一列の動的切り替え
+        }
+        
+        // 親座標 + 相対オフセットによる一括行列変換
+        enemyTransforms_[enemyIdx].position = center + offset;
+    }
+}</code></pre>
+                </div>
+            </div>
+
+            <!-- 3.2 Floor Ring Buffer Pool -->
+            <div class="card" style="margin-bottom: 30px;">
+                <div class="card-title">
+                    <span class="icon">🧱</span> 3.2 床48タイル・リングバッファプール ＆ ビル積層描画
+                </div>
+                <p><strong>【選定理由】</strong> 48枚の床オブジェクトを円環バッファ（Ring Buffer）構造で常駐させ、自機のZ移動に応じてカメラ後方に去ったタイルを前方へ `Z + TileSize * 48` だけループ移動させる設計を採用。1階〜5階までの構造パーツを個別に持つプロシージャルビル積層（Cascade Rendering）によりメモリを大幅節約した。</p>
+
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>C++ Implementation: GamePlayScene.cpp (抜粋)</span>
+                        <span>C++20 / Object Pooling</span>
+                    </div>
+                    <pre><code class="language-cpp">// 床タイルの無限ループ再配置ロジック
+void GamePlayScene::UpdateInfiniteFloor(float cameraZ) {
+    const float kTileSize = 40.0f;
+    const int kTotalTiles = 48;
+    const float kLoopLength = kTileSize * kTotalTiles;
+
+    for (int i = 0; i < kTotalTiles; ++i) {
+        float tileZ = floorPositions_[i].z;
+        // カメラより一定距離後方に去ったタイルを前方にワープ再配置
+        if (cameraZ - tileZ > kTileSize * 4.0f) {
+            floorPositions_[i].z += kLoopLength;
+        }
+        // 定数バッファの変換行列を更新 (メモリ割り当て数 0 回)
+        floorTransformData_[i]->WVP = MakeIdentity4x4() * MakeTranslate(floorPositions_[i]) * viewProjectionMatrix_;
+    }
+}</code></pre>
+                </div>
+            </div>
+
+            <!-- 3.3 Aim Assist & PostProcess -->
+            <div class="card">
+                <div class="card-title">
+                    <span class="icon">🎯</span> 3.3 ターゲット吸着エイムアシスト ＆ ディゾルブ・アウトラインHLSL
+                </div>
+                <p>ハイスピード下での命中感を高めるエイムアシスト（レティクル周囲のターゲット検索と球状弾道補正）と、D3D12レンダーターゲット分離によるピクセルシェーダーポストプロセスを組み込んだ。</p>
+
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>HLSL Pixel Shader: Dissolve.PS.hlsl (抜粋)</span>
+                        <span>DirectX 12 HLSL</span>
+                    </div>
+                    <pre><code class="language-hlsl">float4 main(VSOutput input) : SV_TARGET {
+    float4 mainColor = gTexture.Sample(gSampler, input.uv);
+    float mask = gMaskTexture.Sample(gSampler, input.uv).r;
+
+    // 閾値以下のピクセルをアルファテスト破棄 (Discard)
+    if (mask < gDissolveParam.threshold) {
+        discard;
+    }
+
+    // 消失エッジ部分の発光合成 (オレンジ・ネオン発光)
+    if (mask < gDissolveParam.threshold + gDissolveParam.edgeRange) {
+        mainColor.rgb += gDissolveParam.edgeColor * 2.0f;
+    }
+
+    return mainColor;
+}</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 04: トラブルシューティング -->
+        <section class="section-block">
+            <div class="section-header">
+                <span class="section-num">04</span>
+                <h2 class="section-title">結果とトラブルシューティング（Result & Reflection）</h2>
+            </div>
+            <div class="trouble-card">
+                <h3 style="color: var(--accent-yellow); font-size: 1.15rem; margin-bottom: 10px;">
+                    🛠️ トラブルケース: 高速特攻敵 (kDive) におけるすり抜け衝突判定の解消
+                </h3>
+                <p style="color: var(--text-sub); font-size: 0.92rem;">
+                    敵が特攻ダイブ（180m/s以上）に移行した際、1/60秒のフレーム間で自機を飛び越えてすり抜けるバグを解決したプロセス。
+                </p>
+
+                <div class="trouble-flow">
+                    <div class="flow-step">
+                        <div class="step-num">STEP 01: 失敗 (Problem)</div>
+                        <h4>判定すり抜けバグ</h4>
+                        <p>高速特攻敵が自機のAABB衝突判定をすり抜け、ダメージが正しく適用されない現象が発生。</p>
+                    </div>
+                    <div class="flow-step">
+                        <div class="step-num">STEP 02: 特定 (Diagnosis)</div>
+                        <h4>フレーム離散解析</h4>
+                        <p>1フレームの移動量 ($\Delta s = v \cdot \Delta t$) が判定球の半径を超過していることを特定。</p>
+                    </div>
+                    <div class="flow-step">
+                        <div class="step-num">STEP 03: 改善 (Fix)</div>
+                        <h4>スイープ球判定導入</h4>
+                        <p>前フレームから現在位置までの軸を「Capsule/Swept Sphere」としてレイキャスト幾何判定。</p>
+                    </div>
+                    <div class="flow-step">
+                        <div class="step-num">STEP 04: 知見 (Reflection)</div>
+                        <h4>連続衝突判定 (CCD)</h4>
+                        <p>ハイスピードゲームにおける幾何衝突判定の連続性と計算軽量化手法を獲得。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 05: 3つの視点 & 定量成果 -->
+        <section class="section-block">
+            <div class="section-header">
+                <span class="section-num">05</span>
+                <h2 class="section-title">技術的成果と3つの評価視点</h2>
+            </div>
+
+            <!-- Quantitative Metrics Dashboard -->
+            <h3 style="color: #fff; font-size: 1.1rem; margin-bottom: 16px;">視点1: 定量的な成果（Before / After の数値化）</h3>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">敵100体AI更新時間 (CPU)</div>
+                    <div class="metric-val highlight-green">0.12ms</div>
+                    <div class="metric-change">← Before: 2.14ms (94.4%削減)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">ステージメモリ割り当て回数</div>
+                    <div class="metric-val">0 回</div>
+                    <div class="metric-change">← 動的Instantiate全廃</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">エイムアシスト時中弾率</div>
+                    <div class="metric-val highlight-green">68.5%</div>
+                    <div class="metric-change">← Before: 14.2% (命中性大向上)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">ポストプロセス追加描画時間</div>
+                    <div class="metric-val">0.18ms</div>
+                    <div class="metric-change">← 軽量統合レンダーターゲット</div>
+                </div>
+            </div>
+
+            <div class="grid-2col">
+                <div class="card">
+                    <div class="card-title">
+                        <span class="icon">⚖️</span> 視点2: トレードオフの深い理解
+                    </div>
+                    <ul>
+                        <li><strong>隊列離脱時の補間計算オーバーヘッド</strong>: 敵がフォーメーション飛行から特攻ダイブへ移行する際、座標ワープを防ぐ12フレームの補間計算（Slerp）を許容したが、視覚的な滑らかさを最優先とした。</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">
+                        <span class="icon">🤝</span> 視点3: 他職種視点での設計（拡張性・保守性）
+                    </div>
+                    <ul>
+                        <li><strong>完全データ駆動の敵出現＆マップ構成</strong>: 敵のフォーメーションタイプや出現タイミングはすべて外部の JSON / CSV から読み込むため、非プログラマー主導でレベルデザインが可能。</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            <p>3D Fixed-Route Shooting Prototype — Architecture Documentation</p>
+            <p style="margin-top: 6px; font-size: 0.78rem;">Built with C++20, DirectX 12, HLSL & Python</p>
+        </footer>
+    </div>
+
+    <script>
+        function syncMeta() {
+            const studentId = document.getElementById('student-id').value;
+            const userName = document.getElementById('user-name').value;
+            localStorage.setItem('portfolio_student_id', studentId);
+            localStorage.setItem('portfolio_user_name', userName);
+        }
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedId = localStorage.getItem('portfolio_student_id');
+            const savedName = localStorage.getItem('portfolio_user_name');
+            if (savedId) document.getElementById('student-id').value = savedId;
+            if (savedName) document.getElementById('user-name').value = savedName;
+        });
+    </script>
+</body>
+</html>

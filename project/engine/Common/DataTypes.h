@@ -78,6 +78,7 @@ struct ModelData {
 struct TransformationMatrix {
 	Matrix4x4 WVP;
 	Matrix4x4 World;
+	Vector4 color; // モデル単位のカラー(アルファフェード等に使用)
 };
 
 // 平行光源

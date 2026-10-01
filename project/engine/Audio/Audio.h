@@ -32,7 +32,12 @@ public:
 	// volume: 音量 (0.0f ~ 1.0f)
 	void PlayWave(const SoundData& soundData, bool loop = false, float volume = 1.0f);
 
+	// ミュート制御
+	void SetMuted(bool isMuted) { isMuted_ = isMuted; }
+	bool IsMuted() const { return isMuted_; }
+
 private:
 	Microsoft::WRL::ComPtr<IXAudio2> xAudio2_;
 	IXAudio2MasteringVoice* masterVoice_ = nullptr;
+	bool isMuted_ = true; // デフォルトでミュート(消音)状態
 };
