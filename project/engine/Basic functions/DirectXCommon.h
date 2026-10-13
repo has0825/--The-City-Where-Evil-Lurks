@@ -35,6 +35,7 @@ public:
     UINT GetBackBufferCount() const { return kBackBufferCount_; }
     ID3D12CommandAllocator* GetCommandAllocator() const { return commandAllocator_.Get(); }
     D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentBackBufferRtvHandle() const { return rtvHandles_[swapChain_->GetCurrentBackBufferIndex()]; }
+    ID3D12Resource* GetCurrentBackBufferResource() const { return backBuffers_[swapChain_->GetCurrentBackBufferIndex()].Get(); }
     UINT GetDescriptorSizeSRV() const { return device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); }
     UINT GetDescriptorSizeRTV() const { return device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV); }
     D3D12_CPU_DESCRIPTOR_HANDLE GetRenderTextureRtvHandle() const { return rtvHandles_[2]; }

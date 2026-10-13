@@ -770,4 +770,5 @@ private:
     Vector3 CalculateRailUp(const Vector3& dir, const Vector3& right);
     Vector3 GetBossPosition(float bodyBounce, float dropOffset = 0.0f, float yAttackOffset = 0.0f);
     bool isBossFightInitialized_ = false; // ボス戦のビルプール初期化フラグ
+    bool hasStartedInitialPhase_ = false; // ロード画面の左右分割が完了して画面外へ出た後にPHASE 1を開始するフラグ
 };

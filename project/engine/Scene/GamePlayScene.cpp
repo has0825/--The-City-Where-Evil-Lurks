@@ -271,9 +271,8 @@ void GamePlayScene::Initialize() {
     isTransitioning_ = false;
     transitionThreshold_ = 0.0f;
     activePostProcess_ = kNone;
-    if (!isTitleMode_) {
-        StartPhaseIntro(1);
-    }
+    hasStartedInitialPhase_ = false;
+    phaseIntroTimer_ = -1.0f;
 
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
     srvDesc.Format = metadata.format;
@@ -1887,6 +1886,13 @@ void GamePlayScene::Update() {
         screenWebTimer_ -= kDeltaTime;
     }
 
+    // ── 切れたロード画面が左右へ完全に画面外へ出た瞬間に「PHASE 1」を開始 ──
+    bool isWaitingForTransition = (!isTitleMode_ && SceneManager::GetInstance()->IsLoading());
+    if (!isTitleMode_ && !isWaitingForTransition && !hasStartedInitialPhase_) {
+        hasStartedInitialPhase_ = true;
+        StartPhaseIntro(1);
+    }
+
     // ── 「PHASE」表示演出タイマーの更新 ──
     if (phaseIntroTimer_ >= 0.0f) {
         phaseIntroTimer_ += kDeltaTime;
@@ -1950,7 +1956,7 @@ void GamePlayScene::Update() {
     }
 
     // ── フェーズ自動遷移 ──
-    if (!isTitleMode_ && currentPhase_ != GamePhase::kBossFight) {
+    if (!isTitleMode_ && !isWaitingForTransition && !(phaseIntroTimer_ >= 0.0f) && currentPhase_ != GamePhase::kBossFight) {
         phaseTimer_ += kDeltaTime;
         if (phaseTimer_ >= kPhaseDuration) {
             phaseTimer_ = 0.0f;
@@ -2498,7 +2504,7 @@ void GamePlayScene::Update() {
         // --- 戦闘機（レールシューター）モード ---
 
         // ── ブースト処理（LSHIFTで発動、バレルロール終了と同時に自動で戻る） ────────────────
-        if (input_->IsKeyTriggered(DIK_LSHIFT) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isTitleMode_) {
+        if (input_->IsKeyTriggered(DIK_LSHIFT) && !(phaseIntroTimer_ >= 0.0f) && !isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
             if (!isBarrelRolling_) {
                 isBoosting_ = true;
                 isBarrelRolling_ = true;
@@ -2539,7 +2545,7 @@ void GamePlayScene::Update() {
 
         // ── 1. プレイヤーのワールドZ座標を自律前進 ──────────────────
         bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
-        if (!(phaseIntroTimer_ >= 0.0f) && !isBossIntro && !isBossDefeatedSequence_) {
+        if (!(phaseIntroTimer_ >= 0.0f) && !isWaitingForTransition && !isBossIntro && !isBossDefeatedSequence_) {
             fighterWorldZ_ += boostForwardSpeed_ * kDeltaTime;
         }
 
@@ -2563,7 +2569,7 @@ void GamePlayScene::Update() {
         // ── 3. 自機の横/縦移動（画面内相対）─────────────────────────
         if (fighterModel_) {
             Vector3 inputDir = {0,0,0};
-            if (!(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isTitleMode_) {
+            if (!(phaseIntroTimer_ >= 0.0f) && !isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
                 if (input_->IsKeyPressed(DIK_W)) inputDir.y += 1.0f;
                 if (input_->IsKeyPressed(DIK_S)) inputDir.y -= 1.0f;
                 if (input_->IsKeyPressed(DIK_A)) inputDir.x -= 1.0f;
@@ -4384,7 +4390,7 @@ void GamePlayScene::Update() {
 
         // グループ中心Zに基づく画面外判定と強制リポップ処理は、一括全滅リポップ制御に移行したため削除しました
 
-        bool isPhaseIntroActive = (phaseIntroTimer_ >= 0.0f);
+        bool isPhaseIntroActive = (phaseIntroTimer_ >= 0.0f) || isWaitingForTransition;
 
         // ── 雑魚敵の移動・状態更新 ──
         for (int i = 0; i < kMaxEnemies; ++i) {
