@@ -77,6 +77,14 @@ public:
     bool IsTitleMode() const { return isTitleMode_; }
     void TriggerTitleTransitionBoost();
 
+    bool GetTransitionPlayerTarget(
+        Matrix4x4& outFighterWorld,
+        Matrix4x4& outViewProj,
+        Vector3& outCamPos,
+        Vector3& outCamForward,
+        Vector3& outCamUp,
+        Vector3& outFighterPos) const override;
+
     // 音声再生ラッパー
     void PlaySE(const SoundData& soundData, bool loop = false, float volume = 1.0f);
     

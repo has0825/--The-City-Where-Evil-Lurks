@@ -2746,8 +2746,8 @@ void GamePlayScene::Update() {
                 Vector3 camBackVector = Scale(playerRailDir, -currentDist);
                 Vector3 targetCamPos = Add(playerRailPos, Add(camBackVector, Add(Scale(playerRailRight, camRelativeX_), Scale(playerRailUp, camOffsetUp))));
 
-                // カメラ位置のスムーズ追従 (Smooth Follow)
-                float posLerpFactor = 0.12f;
+                // カメラ位置のスムーズ追従 (Smooth Follow、遷移待機中は即座に初期定位置へ固定)
+                float posLerpFactor = isWaitingForTransition ? 1.0f : 0.12f;
                 Vector3 camDiff = Subtract(targetCamPos, camTrans.translate);
                 float camDistSq = camDiff.x * camDiff.x + camDiff.y * camDiff.y + camDiff.z * camDiff.z;
                 if (camDistSq > 10000.0f) { // 100m以上離れている場合は即座にワープ
@@ -2783,7 +2783,7 @@ void GamePlayScene::Update() {
                 float targetRotX = baseCamRotX + targetCamRotateX;
 
                 // カメラの回転角のスムーズ首振り（最短角度差による補間）
-                float rotLerpFactor = 0.15f;
+                float rotLerpFactor = isWaitingForTransition ? 1.0f : 0.15f;
 
                 float diffY = targetRotY - camTrans.rotate.y;
                 while (diffY < -static_cast<float>(M_PI)) diffY += 2.0f * static_cast<float>(M_PI);
@@ -7370,4 +7370,27 @@ void GamePlayScene::TriggerTitleTransitionBoost() {
     transitionStartCamRot_ = camera_->GetTransform().rotate;
     titleTransitionTimer_ = 0.0f;
 }
+
+bool GamePlayScene::GetTransitionPlayerTarget(
+    Matrix4x4& outFighterWorld,
+    Matrix4x4& outViewProj,
+    Vector3& outCamPos,
+    Vector3& outCamForward,
+    Vector3& outCamUp,
+    Vector3& outFighterPos) const {
+    if (!camera_ || !fighterTransformData_ || !fighterModel_) return false;
+    outFighterWorld = fighterTransformData_->World;
+    outViewProj     = camera_->GetViewProjectionMatrix();
+    outCamPos       = camera_->GetTransform().translate;
+    Matrix4x4 camWorld = Inverse(camera_->GetViewMatrix());
+    outCamForward = Normalize({ camWorld.m[2][0], camWorld.m[2][1], camWorld.m[2][2] });
+    outCamUp      = Normalize({ camWorld.m[1][0], camWorld.m[1][1], camWorld.m[1][2] });
+    outFighterPos = {
+        outFighterWorld.m[3][0],
+        outFighterWorld.m[3][1],
+        outFighterWorld.m[3][2]
+    };
+    return true;
+}
+
 

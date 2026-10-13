@@ -34,6 +34,7 @@ public:
 
     // ロード中かどうかを取得
     bool IsLoading() const { return isLoading_; }
+    BaseScene* GetNextScene() const { return nextScene_.get(); }
 
 private:
     SceneManager() = default;

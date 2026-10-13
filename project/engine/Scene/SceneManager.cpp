@@ -103,8 +103,8 @@ void SceneManager::Draw() {
             if (currentScene_) {
                 currentScene_->Draw();
             }
-        } else if (phase == LoadingScreen::TransitionPhase::kSplitLoadingLeftRight) {
-            // 5. 切れたロード画面が左右に開くフェーズでは、隙間の奥に新シーン（ゲーム画面）を描画
+        } else if (loading->ShouldDrawNextSceneUnderneath()) {
+            // 5. 切れた/割れたロード画面の奥に新シーン（ゲーム画面）を描画
             if (isLoadCompleted_ && nextScene_) {
                 nextScene_->Draw();
             }
