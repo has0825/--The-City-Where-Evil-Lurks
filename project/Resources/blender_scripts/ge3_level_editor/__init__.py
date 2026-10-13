@@ -10,14 +10,28 @@ bl_info = {
 }
 
 import bpy
-from . import collider
-from . import disabled
-from . import level_editor
+import os
+import sys
+
+try:
+    from . import collider
+    from . import disabled
+    from . import level_editor
+except ImportError:
+    _dir = r"C:\Users\k024g\Desktop\GE3&CG3\project\Resources\blender_scripts\ge3_level_editor"
+    if _dir not in sys.path:
+        sys.path.append(_dir)
+    import collider
+    import disabled
+    import level_editor
 
 classes = [
     level_editor.GE3_OT_ImportLayout, 
     level_editor.GE3_OT_ExportLayout, 
     level_editor.GE3_OT_GenerateCity, 
+    level_editor.GE3_OT_EditRouteCurve,
+    level_editor.GE3_OT_BendRouteString,
+    level_editor.GE3_OT_ResetRouteString,
     level_editor.GE3_OT_TurnRouteFromSelected,
     level_editor.GE3_OT_AlignLanesToCenter,
     level_editor.GE3_OT_RemoveOverlappingBuildings,

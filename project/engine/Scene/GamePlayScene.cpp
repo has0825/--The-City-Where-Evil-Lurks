@@ -1034,10 +1034,11 @@ void GamePlayScene::Initialize() {
                     std::getline(ss, dummy, ',');
                 }
 
-                std::string s_rx, s_ry, s_rz;
+                std::string s_rx, s_ry, s_rz, s_juziro;
                 std::getline(ss, s_rx, ',');
                 std::getline(ss, s_ry, ',');
                 std::getline(ss, s_rz, ',');
+                std::getline(ss, s_juziro, ',');
 
                 float gx = std::stof(s_gx);
                 float gy = std::stof(s_gy);
@@ -1045,10 +1046,12 @@ void GamePlayScene::Initialize() {
                 float rx = s_rx.empty() ? 0.0f : std::stof(s_rx);
                 float ry = s_ry.empty() ? 0.0f : std::stof(s_ry);
                 float rz = s_rz.empty() ? 0.0f : std::stof(s_rz);
+                int isJuziro = s_juziro.empty() ? -1 : std::stoi(s_juziro);
 
                 if (floorCount < kNumFloors) {
                     floorPositions_[floorCount] = { gx + kWorldShiftX, kFloorY, gz };
                     floorRotations_[floorCount] = { rx, ry, rz };
+                    floorIsJuziro_[floorCount] = isJuziro;
                     floorCount++;
                 }
             } else if (type == "WAYPOINT") {
@@ -1085,6 +1088,107 @@ void GamePlayScene::Initialize() {
             waypointDistances_[i] = waypointDistances_[i - 1] + dist;
         }
 
+        // ── 床タイルの縦・横300m置き十字路(juziro.jpg)判定および横道(douro.jpg)の向き・間隔設定 ──
+        for (int i = 0; i < numLoadedFloors_; ++i) {
+            if (floorIsJuziro_[i] == -1) {
+                size_t bestIdx = 0;
+                float bestDistSq = 1e18f;
+                for (size_t w = 0; w < waypoints_.size(); ++w) {
+                    float dx = floorPositions_[i].x - waypoints_[w].x;
+                    float dz = floorPositions_[i].z - waypoints_[w].z;
+                    float d2 = dx * dx + dz * dz;
+                    if (d2 < bestDistSq) {
+                        bestDistSq = d2;
+                        bestIdx = w;
+                    }
+                }
+                float sVal = waypointDistances_[bestIdx];
+                float rem = std::fmod(std::abs(sVal), 300.0f);
+                bool isJuziroRow = (rem < 45.0f || rem > 255.0f);
+
+                float dLat = std::sqrt(bestDistSq);
+                int colIdx = static_cast<int>(std::round(dLat / kRoadColumnXOffset));
+                bool isJuziroCol = ((std::abs(colIdx) % 3) == 0);
+
+                floorIsJuziro_[i] = (isJuziroRow && isJuziroCol) ? 1 : 0;
+                if (isJuziroRow && !isJuziroCol) {
+                    floorRotations_[i].y += 1.57079632f;
+                }
+            }
+        }
+
+        // ── juziro.jpg の隣にある douro.jpg を重ならないギリギリ（隙間0m・重なり0m）でぴったり接続 ──
+        for (int i = 0; i < numLoadedFloors_; ++i) {
+            if (floorIsJuziro_[i] == 1) {
+                floorPositions_[i].y = kFloorY + 0.002f;
+                continue;
+            }
+
+            // 最も近い十字路タイル (juziro.jpg) を探す
+            int bestJ = -1;
+            float bestDistSq = 1e18f;
+            for (int j = 0; j < numLoadedFloors_; ++j) {
+                if (floorIsJuziro_[j] != 1) continue;
+                float dx = floorPositions_[i].x - floorPositions_[j].x;
+                float dz = floorPositions_[i].z - floorPositions_[j].z;
+                float d2 = dx * dx + dz * dz;
+                if (d2 < bestDistSq) {
+                    bestDistSq = d2;
+                    bestJ = j;
+                }
+            }
+
+            if (bestJ >= 0) {
+                float jRy = floorRotations_[bestJ].y;
+                float fwdX = std::sin(jRy);
+                float fwdZ = std::cos(jRy);
+                float rightX = std::cos(jRy);
+                float rightZ = -std::sin(jRy);
+
+                float dx = floorPositions_[i].x - floorPositions_[bestJ].x;
+                float dz = floorPositions_[i].z - floorPositions_[bestJ].z;
+                float dFwd = dx * fwdX + dz * fwdZ;
+                float dLat = dx * rightX + dz * rightZ;
+
+                if (std::abs(dFwd) < 40.0f) {
+                    // 十字路と同じ横並びの列にある横道 douro.jpg (2 = 横道: 80m×80m、中心距離±80mでぴったり接続)
+                    floorIsJuziro_[i] = 2;
+                    if (std::abs(dLat) >= 70.0f && std::abs(dLat) <= 90.0f) {
+                        float targetLat = (dLat >= 0.0f) ? 80.0f : -80.0f;
+                        float shift = targetLat - dLat;
+                        floorPositions_[i].x += rightX * shift;
+                        floorPositions_[i].z += rightZ * shift;
+                    }
+                } else {
+                    // 縦方向の douro.jpg (0 = 縦道: 長さ110m×幅80m、十字路から中心距離±95mで 40m〜150m / 150m〜260m にぴったり接続)
+                    floorIsJuziro_[i] = 0;
+                    if (std::abs(dFwd) >= 70.0f && std::abs(dFwd) <= 115.0f) {
+                        float targetFwd = (dFwd >= 0.0f) ? 95.0f : -95.0f;
+                        float shift = targetFwd - dFwd;
+                        floorPositions_[i].x += fwdX * shift;
+                        floorPositions_[i].z += fwdZ * shift;
+                    }
+                }
+            }
+
+            // 境界線の同一ピクセルZファイティング防止用の極小オフセット
+            floorPositions_[i].y = kFloorY + 0.0002f * static_cast<float>(i % 7);
+        }
+
+        // カーブ内側等で中心距離が極端に近い重複タイルがあれば非表示化
+        for (int i = 0; i < numLoadedFloors_; ++i) {
+            if (floorPositions_[i].y < -5000.0f) continue;
+            for (int k = 0; k < i; ++k) {
+                if (floorPositions_[k].y < -5000.0f) continue;
+                float dx = floorPositions_[i].x - floorPositions_[k].x;
+                float dz = floorPositions_[i].z - floorPositions_[k].z;
+                if (dx * dx + dz * dz < 55.0f * 55.0f) {
+                    floorPositions_[i].y = -10000.0f;
+                    break;
+                }
+            }
+        }
+
         // ── プレイヤー進行ルート（コース中央脇）へのビル増量・高密度配置 ──
         if (!waypointDistances_.empty() && waypointDistances_.back() > 0.0f) {
             float totalDist = waypointDistances_.back();
@@ -1095,8 +1199,8 @@ void GamePlayScene::Initialize() {
                 Vector3 railDir = GetRailDirection(s);
                 Vector3 railRight = CalculateRailRight(railDir);
 
-                // コース中央脇の左右4レーン (±45m, ±85m)
-                const float sideOffsets[] = { -45.0f, +45.0f, -85.0f, +85.0f };
+                // コース脇の左右4レーン (±85m, ±125m：十字路の縦通り±52mを避けた街区列)
+                const float sideOffsets[] = { -85.0f, +85.0f, -125.0f, +125.0f };
                 for (int k = 0; k < 4; ++k) {
                     float offset = sideOffsets[k];
                     Vector3 bPos = Add(railPos, Scale(railRight, offset));
@@ -1120,8 +1224,8 @@ void GamePlayScene::Initialize() {
                         b.scale = { 10.0f, 10.0f, 10.0f };
                         b.isNearCourseColumn = true; // 中央＆すぐ隣の列フラグ（詳細描画用）
 
-                        // 近列(±45m)は中層(3~8階)、外列(±85m)は高層(6~12階)
-                        if (std::abs(offset) < 60.0f) {
+                        // 近列(±85m)は中層(3~8階)、外列(±125m)は高層(6~12階)
+                        if (std::abs(offset) < 100.0f) {
                             b.floors = 3 + (randomEngine_() % 6);
                         } else {
                             b.floors = 6 + (randomEngine_() % 7);
@@ -1158,17 +1262,16 @@ void GamePlayScene::Initialize() {
                     Vector3 rightStraight = CalculateRailRight(dirStraight);
                     Vector3 pStart = GetRailPosition(s);
 
-                    // 直進方向（ダミー道路が伸びている方向）へ 15 ステップ（各 80m）高密度に伸ばす
+                    // 直進方向（ダミー道路が伸びている方向）へ 15 ステップ（各 80m）高密度に伸ばす（十字路の縦通り 0m, ±240m を避けた街区列）
                     const float dummyCols[] = {
-                        -45.0f, 45.0f, -85.0f, 85.0f,
-                        -125.0f, 125.0f, -165.0f, 165.0f, -205.0f, 205.0f,
-                        -245.0f, 245.0f, -285.0f, 285.0f, -325.0f, 325.0f, -365.0f, 365.0f
+                        -85.0f, 85.0f, -125.0f, 125.0f, -165.0f, 165.0f,
+                        -325.0f, 325.0f, -365.0f, 365.0f, -405.0f, 405.0f
                     };
                     for (int d = 1; d <= 15; ++d) {
                         float dDist = d * 80.0f;
                         Vector3 pDummy = Add(pStart, Scale(dirStraight, dDist));
 
-                        for (int k = 0; k < 18; ++k) {
+                        for (int k = 0; k < 12; ++k) {
                             float offset = dummyCols[k];
                             Vector3 bPos = Add(pDummy, Scale(rightStraight, offset));
                             bPos.y = -20.0f;
@@ -1275,11 +1378,11 @@ void GamePlayScene::Initialize() {
         }
     }
 
-    // ── プレイヤーが通る中央タイル/レールと重なっているビルを自動削除 ──
+    // ── プレイヤーが通る中央タイル/レールおよび十字路の縦道・横道と重なっているビルを自動削除 ──
     if (!waypoints_.empty() && !waypointDistances_.empty() && waypointDistances_.back() > 0.0f) {
         float totalDist = waypointDistances_.back();
         float checkStep = 10.0f; // 10m間隔で進行ライン上の判定を網羅
-        const float kCenterClearRadius = 38.0f; // 中央レール中心から38m以内（道路中央通行域）のビルは削除対象
+        const float kCenterClearRadius = 40.0f; // 進行ルート中心から40m以内（道路通行域）のビルは削除対象
 
         for (size_t i = 0; i < buildings_.size(); ++i) {
             if (buildings_[i].floors <= 0 || buildings_[i].isDestroyed) continue;
@@ -1295,8 +1398,31 @@ void GamePlayScene::Initialize() {
                 }
             }
 
+            // 十字路(juziro.jpg)がある「横方向の通り」および「縦方向の通り」にあるビルも削除
+            if (!isOverlappingWithCenter) {
+                for (int f = 0; f < numLoadedFloors_; ++f) {
+                    if (floorIsJuziro_[f] != 1) continue;
+                    float dx = buildings_[i].position.x - floorPositions_[f].x;
+                    float dz = buildings_[i].position.z - floorPositions_[f].z;
+                    if (dx * dx + dz * dz > 260.0f * 260.0f) continue;
+
+                    float ry = floorRotations_[f].y;
+                    float sinY = std::sin(ry);
+                    float cosY = std::cos(ry);
+                    float distForward = std::abs(dx * sinY + dz * cosY);
+                    float distLateral = std::abs(dx * cosY - dz * sinY);
+                    // 1. 十字路がある横方向の通り (前後±52m、左右±200m)
+                    // 2. 十字路がある縦方向の通り (左右±52m、前後±200m)
+                    if ((distForward < 52.0f && distLateral < 200.0f) ||
+                        (distLateral < 52.0f && distForward < 200.0f)) {
+                        isOverlappingWithCenter = true;
+                        break;
+                    }
+                }
+            }
+
             if (isOverlappingWithCenter) {
-                // 中央タイルと重なっているビルを削除 (floors = 0)
+                // 進行ルートまたは十字路の縦横通りと重なっているビルを削除 (floors = 0)
                 buildings_[i].floors = 0;
                 buildings_[i].originalFloors = 0;
             }
@@ -4774,8 +4900,9 @@ void GamePlayScene::Update() {
         {
             int cbIndex = 0;
             bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
-            float camZ = (isBossIntro || isTitleMode_) ? (fighterWorldZ_ - 65.0f) : camera_->GetTransform().translate.z;
-            float camX = (isBossIntro || isTitleMode_) ? 0.0f : camera_->GetTransform().translate.x;
+            Vector3 refCamPos = (isBossIntro || isTitleMode_) ? GetRailPosition((std::max)(0.0f, fighterWorldZ_ - 65.0f)) : camera_->GetTransform().translate;
+            float camZ = refCamPos.z;
+            float camX = refCamPos.x;
 
             for (size_t i = 0; i < buildings_.size(); ++i) {
                 buildings_[i].cbIndexStart = -1;
@@ -4790,17 +4917,15 @@ void GamePlayScene::Update() {
 
                 float dz = buildings_[i].position.z - camZ;
                 float dx = buildings_[i].position.x - camX;
+                float distSq = dx * dx + dz * dz;
 
-                // 距離カリング: カメラ後方または前方遠すぎるビルは計算・描画を完全スキップ
-                float cullBackDist = (isBossIntro || isTitleMode_) ? 800.0f : kBuildingCullBackDist;
-                if (dz < -cullBackDist || dz > kBuildingCullFarDist) {
+                // 2D全方位の距離カリング（ルートが横方向や逆方向に曲がっても視界内のビルが消えないようにする）
+                if (distSq > kBuildingCullFarDist * kBuildingCullFarDist) {
                     continue;
                 }
 
-                float distSq = dx * dx + dz * dz;
-
                 // プレイヤーが通るルート近傍および直進延長上のビル(isNearCourseColumn)は視界限界(kBuildingCullFarDist)まで常に詳細描画（荒くしない）
-                bool isDetailView = (buildings_[i].isNearCourseColumn && dz >= -cullBackDist && dz <= kBuildingCullFarDist) ||
+                bool isDetailView = buildings_[i].isNearCourseColumn ||
                                     buildings_[i].isDestroyed ||
                                     (distSq <= 120.0f * 120.0f);
 
@@ -4946,13 +5071,16 @@ void GamePlayScene::Update() {
         {
             if (!floorWorldMatricesInitialized_ || (int)floorWorldMatrices_.size() != numLoadedFloors_) {
                 floorWorldMatrices_.resize(numLoadedFloors_);
-                const Vector3 roadScale     = { kRoadDepthScale, kRoadWidthScale, 1.0f };
-                const Matrix4x4 scaleMatrix = Matrix4x4MakeScaleMatrix(roadScale);
+                // 十字路(juziro.jpg: 80m×80m)、横道(douro.jpg: 80m×80m)、縦道(douro.jpg: 長さ110m×幅80m、中心95m/205m) で隙間0m・重なり0mでぴったり接続
+                const Matrix4x4 scaleJuziro = Matrix4x4MakeScaleMatrix({ 40.0f, 40.0f, 1.0f });
+                const Matrix4x4 scaleCross  = Matrix4x4MakeScaleMatrix({ 40.0f, 40.0f, 1.0f });
+                const Matrix4x4 scaleLong   = Matrix4x4MakeScaleMatrix({ 55.0f, 40.0f, 1.0f });
                 const Matrix4x4 baseRotX    = MakeRotateXMatrix(1.57079632f);
                 const Matrix4x4 baseRotY    = MakeRotateYMatrix(1.57079632f);
                 const Matrix4x4 baseRotMat  = Multiply(baseRotX, baseRotY);
 
                 for (int i = 0; i < numLoadedFloors_; ++i) {
+                    const Matrix4x4& scaleMatrix = (floorIsJuziro_[i] == 1) ? scaleJuziro : ((floorIsJuziro_[i] == 2) ? scaleCross : scaleLong);
                     Matrix4x4 courseRotX   = MakeRotateXMatrix(floorRotations_[i].x);
                     Matrix4x4 courseRotY   = MakeRotateYMatrix(floorRotations_[i].y);
                     Matrix4x4 courseRotZ   = MakeRotateZMatrix(floorRotations_[i].z);
@@ -4965,15 +5093,19 @@ void GamePlayScene::Update() {
                         floorTransformData_[i]->World = floorWorldMatrices_[i];
                     }
                 }
+                floorWorldMatricesInitialized_ = true;
             }
 
             bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
-            float camZ = (isBossIntro || isTitleMode_) ? (fighterWorldZ_ - 65.0f) : camera_->GetTransform().translate.z;
-            float cullBackDist = (isBossIntro || isTitleMode_) ? 800.0f : kFloorCullBackDist;
+            Vector3 refCamPos = (isBossIntro || isTitleMode_) ? GetRailPosition((std::max)(0.0f, fighterWorldZ_ - 65.0f)) : camera_->GetTransform().translate;
+            float camX = refCamPos.x;
+            float camZ = refCamPos.z;
+            const float kFloorFarDistSq = kFloorCullFarDist * kFloorCullFarDist;
 
             for (int i = 0; i < numLoadedFloors_; ++i) {
+                float dx = floorPositions_[i].x - camX;
                 float dz = floorPositions_[i].z - camZ;
-                if (dz < -cullBackDist || dz > kFloorCullFarDist) continue;
+                if (dx * dx + dz * dz > kFloorFarDistSq) continue;
 
                 if (floorTransformData_[i]) {
                     floorTransformData_[i]->WVP = Multiply(floorWorldMatrices_[i], viewProjectionMatrix);
@@ -5353,23 +5485,45 @@ void GamePlayScene::Draw() {
                 fighterModel_->DrawModel(commandList, TextureManager::GetInstance()->GetSrvHandleGPU("Player2/Player_basecolor.JPEG"), TextureManager::GetInstance()->GetSrvHandleGPU("test.dds"));
             }
 
-            // 床(Plane)描画 (標準 douro.jpg)
+            // 床(Plane)描画 (標準 douro.jpg & 300m置き十字路 juziro.jpg)
             if (floorModel_) {
                 if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
                 if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
 
                 D3D12_GPU_DESCRIPTOR_HANDLE douroSrv = TextureManager::GetInstance()->GetSrvHandleGPU("douro.jpg");
+                D3D12_GPU_DESCRIPTOR_HANDLE juziroSrv = TextureManager::GetInstance()->GetSrvHandleGPU("juziro.jpg");
                 D3D12_GPU_DESCRIPTOR_HANDLE testSrv = TextureManager::GetInstance()->GetSrvHandleGPU("test.dds");
 
                 bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
-                float camZ = (isBossIntro || isTitleMode_) ? (fighterWorldZ_ - 65.0f) : camera_->GetTransform().translate.z;
-                float cullBackDist = (isBossIntro || isTitleMode_) ? 800.0f : kFloorCullBackDist;
+                Vector3 refCamPos = (isBossIntro || isTitleMode_) ? GetRailPosition((std::max)(0.0f, fighterWorldZ_ - 65.0f)) : camera_->GetTransform().translate;
+                float camX = refCamPos.x;
+                float camZ = refCamPos.z;
+                const float kFloorFarDistSq = kFloorCullFarDist * kFloorCullFarDist;
 
+                // 1. 通常道路 (douro.jpg)
                 floorModel_->PrepareDraw(commandList, douroSrv, testSrv);
-
                 for (int i = 0; i < numLoadedFloors_; ++i) {
+                    if (floorIsJuziro_[i] == 1) continue;
+                    if (floorPositions_[i].y < -5000.0f) continue;
+                    float dx = floorPositions_[i].x - camX;
                     float dz = floorPositions_[i].z - camZ;
-                    if (dz < -cullBackDist || dz > kFloorCullFarDist) continue;
+                    if (dx * dx + dz * dz > kFloorFarDistSq) continue;
+
+                    D3D12_GPU_VIRTUAL_ADDRESS cbAddr = floorTransformBufferResource_ ? 
+                        (floorTransformBufferResource_->GetGPUVirtualAddress() + i * 256) : 
+                        floorTransformResources_[i]->GetGPUVirtualAddress();
+                    commandList->SetGraphicsRootConstantBufferView(1, cbAddr);
+                    floorModel_->DrawPrepared(commandList);
+                }
+
+                // 2. 十字路 (juziro.jpg)
+                floorModel_->PrepareDraw(commandList, juziroSrv, testSrv);
+                for (int i = 0; i < numLoadedFloors_; ++i) {
+                    if (floorIsJuziro_[i] != 1) continue;
+                    if (floorPositions_[i].y < -5000.0f) continue;
+                    float dx = floorPositions_[i].x - camX;
+                    float dz = floorPositions_[i].z - camZ;
+                    if (dx * dx + dz * dz > kFloorFarDistSq) continue;
 
                     D3D12_GPU_VIRTUAL_ADDRESS cbAddr = floorTransformBufferResource_ ? 
                         (floorTransformBufferResource_->GetGPUVirtualAddress() + i * 256) : 

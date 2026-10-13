@@ -393,6 +393,7 @@ private:
     Vector3 floorPositions_[kNumFloors];
     Vector3 floorRotations_[kNumFloors];
     int floorLanes_[kNumFloors];
+    int floorIsJuziro_[kNumFloors] = { 0 };
     float floorProgresses_[kNumFloors];
     Microsoft::WRL::ComPtr<ID3D12Resource> floorTransformBufferResource_;
     Microsoft::WRL::ComPtr<ID3D12Resource> floorTransformResources_[kNumFloors];
