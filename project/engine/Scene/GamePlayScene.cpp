@@ -1,6 +1,7 @@
 #include "GamePlayScene.h"
 #include "WinApp.h"
 #include "SceneManager.h"
+#include "LoadingScreen.h"
 #include "D3D12Util.h"
 #include "MathUtil.h"
 #include "DataTypes.h"
@@ -5194,7 +5195,8 @@ void GamePlayScene::Update() {
         rightJetPos = Add(fighterWorldPos, localOffsetRight);
     }
 
-    // ── パーティクル/エフェクトエンジンの更新 ──
+    // ── パーティクル/エフェクトエンジンの更新（画面外からの突入配置が完了するまではジェット噴射を出さない） ──
+    bool hidePlayerForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
     particleManager_->Update(
         viewProjectionMatrix,
         camera_->GetBillboardMatrix(),
@@ -5202,7 +5204,7 @@ void GamePlayScene::Update() {
         camera_->GetTransform().translate.z,
         fighterWorldPos,
         isBoosting_,
-        (sceneMode_ == SceneMode::kFighter && !isBossDefeatedSequence_),
+        (sceneMode_ == SceneMode::kFighter && !isBossDefeatedSequence_ && !hidePlayerForTransition),
         currentEffect_,
         emitterPos_,
         leftJetPos,
@@ -5483,8 +5485,9 @@ void GamePlayScene::Draw() {
             commandList->SetPipelineState(graphicsPipeline_->GetObject3dPipelineState());
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetObject3dRootSignature());
 
-            // 自機(Fighter)描画
-            if (fighterModel_) {
+            // 自機(Fighter)描画（画面外から突っ込んできたプレイヤー機が定位置に配置されるまでは元から立っている方を非表示にする）
+            bool hidePlayerForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
+            if (fighterModel_ && !hidePlayerForTransition) {
                 if (fighterTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, fighterTransformResource_->GetGPUVirtualAddress());
                 if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
                 if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
@@ -5704,9 +5707,10 @@ void GamePlayScene::Draw() {
             }
         }
         
-        // エイミング(レティクル)の描画 (ボス登場演出中は非表示)
+        // エイミング(レティクル)の描画 (ボス登場演出中および画面外からの突入配置中は非表示)
         bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
-        if (!isBossIntro && !isTitleMode_ && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
+        bool hideReticleForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
+        if (!isBossIntro && !isTitleMode_ && !hideReticleForTransition && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
             commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             if (graphicsPipeline_->GetPipelineState(kBlendModeNormal)) {
@@ -6746,7 +6750,7 @@ void GamePlayScene::DrawDemo() {
         if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
 
         // プレイヤー戦闘機の描画
-        if (fighterModel_ && fighterTransformResource_) {
+        if (fighterModel_ && fighterTransformResource_ && !LoadingScreen::GetInstance()->ShouldHideInGamePlayer()) {
             commandList->SetGraphicsRootConstantBufferView(1, fighterTransformResource_->GetGPUVirtualAddress());
             fighterModel_->DrawModel(commandList, TextureManager::GetInstance()->GetSrvHandleGPU("Player2/Player_basecolor.JPEG"), TextureManager::GetInstance()->GetSrvHandleGPU("test.dds"));
         }

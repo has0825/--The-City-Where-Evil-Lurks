@@ -54,6 +54,7 @@ public:
         return phase_ == TransitionPhase::kSplitLoadingLeftRight ||
                phase_ == TransitionPhase::kGlassShatterAndOverlap;
     }
+    bool ShouldHideInGamePlayer() const;
     bool IsTransitionCompleted() const { return isTransitionCompleted_; }
 
 private:

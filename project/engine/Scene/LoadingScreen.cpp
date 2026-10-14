@@ -261,8 +261,8 @@ void LoadingScreen::Initialize() {
     slashFighterLightRes_ = CreateBufferResource(device, sizeof(DirectionalLight));
     slashFighterLightRes_->Map(0, nullptr, reinterpret_cast<void**>(&slashFighterLightData_));
     slashFighterLightData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    slashFighterLightData_->direction = Normalize({ -0.3f, -0.5f, 0.8f });
-    slashFighterLightData_->intensity = 1.35f;
+    slashFighterLightData_->direction = Normalize({ 0.0f, -1.0f, 1.0f });
+    slashFighterLightData_->intensity = 1.0f;
 
     slashFighterCameraRes_ = CreateBufferResource(device, sizeof(SlashCameraCB));
     slashFighterCameraRes_->Map(0, nullptr, reinterpret_cast<void**>(&slashFighterCameraData_));
@@ -270,6 +270,20 @@ void LoadingScreen::Initialize() {
     slashFighterCameraData_->padding = 0.0f;
 
     isInitialized_ = true;
+}
+
+bool LoadingScreen::ShouldHideInGamePlayer() const {
+    if (isTransitionCompleted_) return false;
+    if (exitPattern_ == ExitPattern::kMultiSlashGlassShatter) {
+        if (phase_ == TransitionPhase::kMultiSlashLoading) {
+            return true;
+        }
+        if (phase_ == TransitionPhase::kGlassShatterAndOverlap) {
+            float shatterT = std::clamp(phaseTimer_ / kGlassShatterDuration, 0.0f, 1.0f);
+            return shatterT < 0.72f;
+        }
+    }
+    return false;
 }
 
 void LoadingScreen::BuildGlassShards() {
@@ -761,16 +775,16 @@ void LoadingScreen::DrawDiveAndOverlapFighter3D(
         );
     }
 
-    // カメラ手前（正面ドアップ）の突入開始位置と、ガラス面を突き破るインパクト位置
+    // カメラ手前の画面外（下・背面寄り）から飛び込んでくる開始位置と、ガラス面を突き破るインパクト位置
     Vector3 startDivePos = {
-        camPos.x + camForward.x * 16.0f + camUp.x * 1.2f,
-        camPos.y + camForward.y * 16.0f + camUp.y * 1.2f,
-        camPos.z + camForward.z * 16.0f + camUp.z * 1.2f
+        camPos.x + camForward.x * 4.0f - camUp.x * 5.0f,
+        camPos.y + camForward.y * 4.0f - camUp.y * 5.0f,
+        camPos.z + camForward.z * 4.0f - camUp.z * 5.0f
     };
     Vector3 impactPos = {
-        std::lerp(startDivePos.x, targetFighterPos.x, 0.44f),
-        std::lerp(startDivePos.y, targetFighterPos.y, 0.44f),
-        std::lerp(startDivePos.z, targetFighterPos.z, 0.44f)
+        std::lerp(startDivePos.x, targetFighterPos.x, 0.42f),
+        std::lerp(startDivePos.y, targetFighterPos.y, 0.42f),
+        std::lerp(startDivePos.z, targetFighterPos.z, 0.42f)
     };
 
     Vector3 currentPos{};
