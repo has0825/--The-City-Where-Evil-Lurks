@@ -30,7 +30,7 @@ private:
 
     bool isTransitioningToGame_ = false;       // 遷移演出中フラグ
     float transitionTimer_ = 0.0f;             // 遷移演出タイマー
-    const float kTransitionDuration = 2.2f;    // 遷移演出時間 (アングル復旧 1.2s + ブースト 1.0s)
+    const float kTransitionDuration = 1.3f;    // ブースト加速演出時間 (1.3s)
 
     Microsoft::WRL::ComPtr<ID3D12Resource> transformResource_;
     TransformationMatrix* transformData_ = nullptr;

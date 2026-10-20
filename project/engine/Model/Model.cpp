@@ -287,6 +287,12 @@ std::unique_ptr<Model> Model::LoadGLTF(const std::string& filename, ID3D12Device
         vertexOffset += mesh->mNumVertices;
     }
 
+    if (modelData.vertices.empty()) {
+        std::string errorMsg = "Model Error: No vertices found in model file: " + filename + "\n";
+        OutputDebugStringA(errorMsg.c_str());
+        return CreateParticleModel(device);
+    }
+
     // アニメーションの読み込み（最初の1つ）
     if (scene->mNumAnimations > 0) {
         aiAnimation* aiAnim = scene->mAnimations[0];
@@ -354,6 +360,10 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateDefaultBuffer(
     UINT64 byteSize,
     Microsoft::WRL::ComPtr<ID3D12Resource>& uploadBuffer) {
 
+    if (!device || !initData || byteSize == 0) {
+        return nullptr;
+    }
+
     D3D12_HEAP_PROPERTIES defaultHeapProps{};
     defaultHeapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -374,7 +384,9 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateDefaultBuffer(
         D3D12_RESOURCE_STATE_COPY_DEST,
         nullptr,
         IID_PPV_ARGS(&defaultBuffer));
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr) || !defaultBuffer) {
+        return nullptr;
+    }
 
     D3D12_HEAP_PROPERTIES uploadHeapProps{};
     uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -386,21 +398,35 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateDefaultBuffer(
         D3D12_RESOURCE_STATE_GENERIC_READ,
         nullptr,
         IID_PPV_ARGS(&uploadBuffer));
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr) || !uploadBuffer) {
+        return nullptr;
+    }
 
     void* mappedData = nullptr;
-    uploadBuffer->Map(0, nullptr, &mappedData);
+    hr = uploadBuffer->Map(0, nullptr, &mappedData);
+    if (FAILED(hr) || !mappedData) {
+        return nullptr;
+    }
     std::memcpy(mappedData, initData, byteSize);
     uploadBuffer->Unmap(0, nullptr);
 
     DirectXCommon* dxCommon = DirectXCommon::GetInstance();
-    ID3D12CommandQueue* commandQueue = dxCommon->GetCommandQueue();
+    ID3D12CommandQueue* commandQueue = dxCommon ? dxCommon->GetCommandQueue() : nullptr;
+    if (!commandQueue) {
+        return defaultBuffer;
+    }
     
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> tempAllocator;
-    device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tempAllocator));
+    hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tempAllocator));
+    if (FAILED(hr) || !tempAllocator) {
+        return defaultBuffer;
+    }
     
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> tempCmdList;
-    device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tempAllocator.Get(), nullptr, IID_PPV_ARGS(&tempCmdList));
+    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tempAllocator.Get(), nullptr, IID_PPV_ARGS(&tempCmdList));
+    if (FAILED(hr) || !tempCmdList) {
+        return defaultBuffer;
+    }
 
     tempCmdList->CopyBufferRegion(defaultBuffer.Get(), 0, uploadBuffer.Get(), 0, byteSize);
 
@@ -418,14 +444,16 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateDefaultBuffer(
     commandQueue->ExecuteCommandLists(1, cmdLists);
 
     Microsoft::WRL::ComPtr<ID3D12Fence> fence;
-    device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
-    HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    commandQueue->Signal(fence.Get(), 1);
-    if (fence->GetCompletedValue() < 1) {
-        fence->SetEventOnCompletion(1, fenceEvent);
-        WaitForSingleObject(fenceEvent, INFINITE);
+    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+    if (SUCCEEDED(hr) && fence) {
+        HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+        commandQueue->Signal(fence.Get(), 1);
+        if (fence->GetCompletedValue() < 1) {
+            fence->SetEventOnCompletion(1, fenceEvent);
+            WaitForSingleObject(fenceEvent, INFINITE);
+        }
+        CloseHandle(fenceEvent);
     }
-    CloseHandle(fenceEvent);
 
     return defaultBuffer;
 }
@@ -434,8 +462,15 @@ void Model::Initialize(const ModelData& modelData, ID3D12Device* device) {
     vertices_ = modelData.vertices;
     indices_ = modelData.indices;
 
+    if (vertices_.empty()) {
+        return;
+    }
+
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexUploadBuffer;
     vertexResource_ = CreateDefaultBuffer(device, vertices_.data(), sizeof(VertexData) * vertices_.size(), vertexUploadBuffer);
+    if (!vertexResource_) {
+        return;
+    }
     vertexBufferView_.BufferLocation = vertexResource_->GetGPUVirtualAddress();
     vertexBufferView_.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices_.size());
     vertexBufferView_.StrideInBytes = sizeof(VertexData);
@@ -443,9 +478,11 @@ void Model::Initialize(const ModelData& modelData, ID3D12Device* device) {
     Microsoft::WRL::ComPtr<ID3D12Resource> indexUploadBuffer;
     if (!indices_.empty()) {
         indexResource_ = CreateDefaultBuffer(device, indices_.data(), sizeof(uint32_t) * indices_.size(), indexUploadBuffer);
-        indexBufferView_.BufferLocation = indexResource_->GetGPUVirtualAddress();
-        indexBufferView_.SizeInBytes = static_cast<UINT>(sizeof(uint32_t) * indices_.size());
-        indexBufferView_.Format = DXGI_FORMAT_R32_UINT;
+        if (indexResource_) {
+            indexBufferView_.BufferLocation = indexResource_->GetGPUVirtualAddress();
+            indexBufferView_.SizeInBytes = static_cast<UINT>(sizeof(uint32_t) * indices_.size());
+            indexBufferView_.Format = DXGI_FORMAT_R32_UINT;
+        }
     }
 
     materialResource_ = CreateBufferResource(device, sizeof(Material));
@@ -647,6 +684,38 @@ void Model::DrawModel(
         commandList->SetGraphicsRootConstantBufferView(6, skinningResource_->GetGPUVirtualAddress());
     }
 
+    commandList->DrawIndexedInstanced(indexCount, 1, 0, 0, 0);
+}
+
+void Model::PrepareDraw(
+    ID3D12GraphicsCommandList* commandList,
+    D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandle,
+    D3D12_GPU_DESCRIPTOR_HANDLE environmentSrvHandle) {
+    D3D12_VERTEX_BUFFER_VIEW* vbView = nullptr;
+    D3D12_INDEX_BUFFER_VIEW* ibView = nullptr;
+
+    if (commonData_) {
+        vbView = &commonData_->vertexBufferView;
+        ibView = &commonData_->indexBufferView;
+    } else {
+        vbView = &vertexBufferView_;
+        ibView = &indexBufferView_;
+    }
+
+    commandList->IASetVertexBuffers(0, 1, vbView);
+    commandList->IASetIndexBuffer(ibView);
+    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    commandList->SetGraphicsRootConstantBufferView(0, materialResource_->GetGPUVirtualAddress());
+    commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandle);
+    commandList->SetGraphicsRootDescriptorTable(3, environmentSrvHandle);
+
+    if (skinningResource_) {
+        commandList->SetGraphicsRootConstantBufferView(6, skinningResource_->GetGPUVirtualAddress());
+    }
+}
+
+void Model::DrawPrepared(ID3D12GraphicsCommandList* commandList) {
+    UINT indexCount = commonData_ ? (UINT)commonData_->indices.size() : (UINT)indices_.size();
     commandList->DrawIndexedInstanced(indexCount, 1, 0, 0, 0);
 }
 

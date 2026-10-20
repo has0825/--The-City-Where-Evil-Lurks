@@ -3,6 +3,8 @@
 #include <dxgidebug.h>
 #include <memory> 
 #include <filesystem>
+#include <vector>
+
 // D3D12のリソースリークをチェックするための構造体
 struct D3DResourceLeakChecker {
     ~D3DResourceLeakChecker() {
@@ -14,14 +16,44 @@ struct D3DResourceLeakChecker {
 };
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
-    std::filesystem::current_path("C:/Users/k024g/Desktop/GE3&CG3/project");
+    try {
+        // 実行ファイルの場所を取得
+        wchar_t exePath[MAX_PATH] = { 0 };
+        GetModuleFileNameW(NULL, exePath, MAX_PATH);
+        std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
 
-    D3DResourceLeakChecker leakChecker;
+        // Resources ディレクトリが存在する場所を探索してカレントディレクトリを設定
+        const std::vector<std::filesystem::path> searchCandidates = {
+            exeDir,                                         // exeと同じフォルダ（配布時・単体実行時）
+            std::filesystem::current_path(),                // 現在のカレントディレクトリ
+            exeDir.parent_path().parent_path() / "project", // generated/outputs/Development から見た project
+            exeDir.parent_path() / "project",               // 親の project
+            exeDir / "project"                              // サブディレクトリの project
+        };
 
-    std::unique_ptr<Game> game = std::make_unique<Game>();
+        for (const auto& candidate : searchCandidates) {
+            std::error_code ec;
+            if (std::filesystem::exists(candidate / "Resources", ec)) {
+                std::filesystem::current_path(candidate, ec);
+                break;
+            }
+        }
 
-    // 実行
-    game->Run();
+        D3DResourceLeakChecker leakChecker;
+
+        std::unique_ptr<Game> game = std::make_unique<Game>();
+
+        // 実行
+        game->Run();
+    }
+    catch (const std::exception& e) {
+        MessageBoxA(NULL, e.what(), "Error", MB_OK | MB_ICONERROR);
+        return -1;
+    }
+    catch (...) {
+        MessageBoxA(NULL, "Unknown error occurred.", "Error", MB_OK | MB_ICONERROR);
+        return -1;
+    }
 
     return 0;
 }

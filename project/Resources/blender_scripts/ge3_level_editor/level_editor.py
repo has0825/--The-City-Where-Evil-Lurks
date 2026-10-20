@@ -191,6 +191,8 @@ def make_image_material(name, relative_image_path):
 
 def set_material_preview_mode():
     """すべての3Dビューポートの表示モードをマテリアルプレビュー（テクスチャ表示）に変更"""
+    if not bpy.context.screen:
+        return
     for area in bpy.context.screen.areas:
         if area.type == 'VIEW_3D':
             for space in area.spaces:
@@ -353,7 +355,7 @@ def create_building_obj(name, gx, gz, floors, sx=10.0, sz=10.0, base_gy=-20.0, r
     
     # 高速化のためメッシュデータコピー(copy())を廃止し共有する
     mat = make_image_material("Mat_Building", "building/buillding_uv.png")
-    if obj.data and mat not in obj.data.materials:
+    if obj.data and mat.name not in obj.data.materials:
         obj.data.materials.clear()
         obj.data.materials.append(mat)
         
@@ -379,32 +381,49 @@ def create_building_obj(name, gx, gz, floors, sx=10.0, sz=10.0, base_gy=-20.0, r
     return obj
 
 
-def get_or_create_floor_mesh():
-    """道路（FLOOR）用の共通平面メッシュテンプレートを取得または作成"""
-    mesh_name = "GE3_Floor_Mesh_Template"
+def get_or_create_floor_mesh(is_juziro=False, is_cross_road=False):
+    """道路（FLOOR）用の共通平面メッシュテンプレートを取得または作成（通常道路用・横道用・十字路用で分離）"""
+    if is_juziro:
+        mesh_name = "GE3_Floor_Mesh_Juziro"
+    elif is_cross_road:
+        mesh_name = "GE3_Floor_Mesh_Douro_Cross"
+    else:
+        mesh_name = "GE3_Floor_Mesh_Douro"
+    tex_name = "juziro.jpg" if is_juziro else "douro.jpg"
+    mat_name = "Mat_Floor_Juziro" if is_juziro else "Mat_Floor_Douro"
+
+    # 十字路(80m×80m)と横道(80m×80m)、縦道(幅80m×長さ110m、中心95m/205m)で隙間0m・重なり0mでぴったり接続
+    sx = 80.0 * SCALE / 2.0
+    sy = (80.0 if (is_juziro or is_cross_road) else 110.0) * SCALE / 2.0
+    verts = [(-sx, -sy, 0.0), (sx, -sy, 0.0), (sx, sy, 0.0), (-sx, sy, 0.0)]
+
     mesh = bpy.data.meshes.get(mesh_name)
     if not mesh:
         mesh = bpy.data.meshes.new(mesh_name)
-        s = 80.0 * SCALE / 2.0  # size=80*SCALE の Plane
-        verts = [(-s, -s, 0.0), (s, -s, 0.0), (s, s, 0.0), (-s, s, 0.0)]
         faces = [(0, 1, 2, 3)]
         mesh.from_pydata(verts, [], faces)
         mesh.update()
-        
-        # UVマッピング設定
-        uv_layer = mesh.uv_layers.new(name="UVMap")
-        uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
-        for loop in mesh.loops:
-            uv_layer.data[loop.index].uv = uvs[loop.vertex_index]
-            
-        mat = make_image_material("Mat_Floor", "douro.jpg")
+    elif len(mesh.vertices) == 4:
+        for v_idx, co in enumerate(verts):
+            mesh.vertices[v_idx].co = co
+        mesh.update()
+
+    # UVマッピング設定（rot_y=0 のときに道路の白線が進行方向(+Y/ゲーム+Z)を向くよう設定。既存メッシュも必ず更新）
+    uv_layer = mesh.uv_layers.get("UVMap") or mesh.uv_layers.new(name="UVMap")
+    uvs = [(1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)]
+    for loop in mesh.loops:
+        uv_layer.data[loop.index].uv = uvs[loop.vertex_index]
+
+    mat = make_image_material(mat_name, tex_name)
+    if len(mesh.materials) != 1 or mesh.materials[0] != mat:
+        mesh.materials.clear()
         mesh.materials.append(mat)
     return mesh
 
 
-def create_floor_obj(name, gx, gy, gz, rot_x=0.0, rot_y=0.0, rot_z=0.0):
+def create_floor_obj(name, gx, gy, gz, rot_x=0.0, rot_y=0.0, rot_z=0.0, is_juziro=False, is_cross_road=False):
     """床オブジェクトをBlenderに作成"""
-    mesh = get_or_create_floor_mesh()
+    mesh = get_or_create_floor_mesh(is_juziro=is_juziro, is_cross_road=is_cross_road)
     obj = bpy.data.objects.new(name, mesh)
     
     obj.location.x = gx * SCALE
@@ -416,6 +435,8 @@ def create_floor_obj(name, gx, gy, gz, rot_x=0.0, rot_y=0.0, rot_z=0.0):
     obj["ge3_rx"] = rot_x
     obj["ge3_ry"] = rot_y
     obj["ge3_rz"] = rot_z
+    obj["ge3_juziro"] = 1 if is_juziro else 0
+    obj["ge3_cross_road"] = 1 if is_cross_road else 0
     
     col = get_or_create_collection()
     col.objects.link(obj)
@@ -458,6 +479,233 @@ def create_enemy_obj(name, gx, gy, gz, col_info=None, disabled=False):
         obj["disabled"] = True
     add_to_collection(obj)
     return obj
+
+
+ROUTE_OBJ_NAME = "GE3_Player_Route"
+
+
+def make_route_material():
+    """プレイヤー進行ルート紐（カーブ）用の視認性の高い発光マテリアルを作成"""
+    mat_name = "Mat_GE3_Player_Route"
+    mat = bpy.data.materials.get(mat_name)
+    if not mat:
+        mat = bpy.data.materials.new(mat_name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    out_node = nodes.new(type='ShaderNodeOutputMaterial')
+    out_node.location = (300, 0)
+
+    emission = nodes.new(type='ShaderNodeEmission')
+    emission.location = (0, 0)
+    emission.inputs["Color"].default_value = (0.0, 0.95, 1.0, 1.0)
+    emission.inputs["Strength"].default_value = 3.0
+    links.new(emission.outputs["Emission"], out_node.inputs["Surface"])
+
+    mat.diffuse_color = (0.0, 0.95, 1.0, 1.0)
+    return mat
+
+
+def create_route_curve_obj(points_game):
+    """
+    ゲーム座標リスト [(gx, gy, gz), ...] からプレイヤー進行ルートを表す1本の紐（Curve）を作成。
+    Edit Modeで頂点を移動・追加して途中で自由に曲げることができる。
+    """
+    if not points_game:
+        return None
+
+    col = get_or_create_collection()
+
+    # 既存のルート紐があれば削除
+    for old_obj in list(bpy.data.objects):
+        if old_obj.name == ROUTE_OBJ_NAME or old_obj.get("ge3_type") == "ROUTE":
+            try:
+                bpy.data.objects.remove(old_obj, do_unlink=True)
+            except Exception:
+                pass
+
+    curve_data = bpy.data.curves.new(name="GE3_Player_Route_Curve", type='CURVE')
+    curve_data.dimensions = '3D'
+    curve_data.resolution_u = 12
+    curve_data.bevel_depth = 0.45  # 3Dビュー上で見やすい太さの紐にする
+
+    spline = curve_data.splines.new(type='POLY')
+    spline.points.add(len(points_game) - 1)
+    for idx, (gx, gy, gz) in enumerate(points_game):
+        # 道路の少し上(+3.0m)に浮かせて見やすく配置
+        spline.points[idx].co = (gx * SCALE, gz * SCALE, (gy + 3.0) * SCALE, 1.0)
+
+    route_obj = bpy.data.objects.new(ROUTE_OBJ_NAME, curve_data)
+    route_obj["ge3_type"] = "ROUTE"
+    route_obj.show_in_front = True  # ビルや道路に隠れず常に手前に表示
+
+    mat = make_route_material()
+    curve_data.materials.append(mat)
+
+    col.objects.link(route_obj)
+    return route_obj
+
+
+def extract_route_waypoints(route_obj, sample_step=50.0, corner_radius=40.0):
+    """
+    GE3_Player_Route カーブオブジェクトからゲーム座標 (gx, gy, gz) のWAYPOINT列を抽出する。
+    折れ線 (POLY) やベジエの頂点を読み取り、角を滑らかに丸めつつ sample_step(50m) 間隔でサンプリングする。
+    """
+    if not route_obj or route_obj.type != 'CURVE' or not route_obj.data.splines:
+        return []
+
+    # Edit Mode 中に呼ばれた場合は編集内容を反映するため一度 update_from_editmode 相当を行う
+    was_edit_mode = (bpy.context.active_object == route_obj and bpy.context.mode == 'EDIT_CURVE')
+    if was_edit_mode:
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            pass
+
+    spline = route_obj.data.splines[0]
+    mw = route_obj.matrix_world
+
+    raw_pts = []
+    if spline.type == 'BEZIER':
+        for bp in spline.bezier_points:
+            co_world = mw @ bp.co
+            gx = co_world.x / SCALE
+            gz = co_world.y / SCALE
+            gy = (co_world.z / SCALE) - 3.0
+            raw_pts.append([gx, gy, gz])
+    else:
+        for pt in spline.points:
+            co_world = mw @ mathutils.Vector((pt.co.x, pt.co.y, pt.co.z))
+            gx = co_world.x / SCALE
+            gz = co_world.y / SCALE
+            gy = (co_world.z / SCALE) - 3.0
+            raw_pts.append([gx, gy, gz])
+
+    if was_edit_mode:
+        try:
+            bpy.ops.object.mode_set(mode='EDIT')
+        except Exception:
+            pass
+
+    # 重複する連続点を除去
+    clean_pts = []
+    for p in raw_pts:
+        if not clean_pts:
+            clean_pts.append(p)
+        else:
+            d = math.sqrt(sum((p[c] - clean_pts[-1][c]) ** 2 for c in range(3)))
+            if d > 1.0:
+                clean_pts.append(p)
+
+    if len(clean_pts) < 2:
+        return [(p[0], p[1], p[2]) for p in clean_pts]
+
+    # 折れ角がある場合はコーナーを滑らかに面取り補間（コーナー半径 corner_radius）
+    smoothed_pts = [clean_pts[0]]
+    for i in range(1, len(clean_pts) - 1):
+        p_prev = clean_pts[i - 1]
+        p_curr = clean_pts[i]
+        p_next = clean_pts[i + 1]
+
+        v_in = [p_curr[c] - p_prev[c] for c in range(3)]
+        v_out = [p_next[c] - p_curr[c] for c in range(3)]
+        len_in = math.sqrt(sum(c * c for c in v_in))
+        len_out = math.sqrt(sum(c * c for c in v_out))
+
+        if len_in > 1.0 and len_out > 1.0:
+            dir_in = [c / len_in for c in v_in]
+            dir_out = [c / len_out for c in v_out]
+            dot = max(-1.0, min(1.0, sum(dir_in[c] * dir_out[c] for c in range(3))))
+            angle = math.acos(dot)
+
+            if angle > math.radians(8.0) and corner_radius > 0.0:
+                cut_dist = min(corner_radius, len_in * 0.4, len_out * 0.4)
+                p_enter = [p_curr[c] - dir_in[c] * cut_dist for c in range(3)]
+                p_exit = [p_curr[c] + dir_out[c] * cut_dist for c in range(3)]
+                arc_steps = 6
+                for s in range(arc_steps + 1):
+                    t = s / float(arc_steps)
+                    u = 1.0 - t
+                    # 2次ベジエ補間で角を滑らかに繋ぐ
+                    arc_p = [
+                        (u * u) * p_enter[c] + (2.0 * u * t) * p_curr[c] + (t * t) * p_exit[c]
+                        for c in range(3)
+                    ]
+                    smoothed_pts.append(arc_p)
+            else:
+                smoothed_pts.append(p_curr)
+        else:
+            smoothed_pts.append(p_curr)
+
+    smoothed_pts.append(clean_pts[-1])
+
+    # sample_step 間隔で等間隔サンプリング
+    sampled = [tuple(smoothed_pts[0])]
+    accum = 0.0
+    for i in range(len(smoothed_pts) - 1):
+        p0 = smoothed_pts[i]
+        p1 = smoothed_pts[i + 1]
+        seg_vec = [p1[c] - p0[c] for c in range(3)]
+        seg_len = math.sqrt(sum(c * c for c in seg_vec))
+        if seg_len < 1e-4:
+            continue
+
+        dist_along = sample_step - accum
+        while dist_along <= seg_len:
+            t = dist_along / seg_len
+            pt = (
+                p0[0] + seg_vec[0] * t,
+                p0[1] + seg_vec[1] * t,
+                p0[2] + seg_vec[2] * t,
+            )
+            sampled.append(pt)
+            dist_along += sample_step
+
+        accum = seg_len - (dist_along - sample_step)
+
+    last_pt = tuple(smoothed_pts[-1])
+    if math.sqrt(sum((sampled[-1][c] - last_pt[c]) ** 2 for c in range(3))) > 10.0:
+        sampled.append(last_pt)
+
+    return sampled
+
+
+def is_on_crossroad_horizontal_street(
+    bx, bz, juziro_tiles_info,
+    clear_half_depth=52.0,
+    max_lateral_dist=200.0,
+    max_longitudinal_dist=200.0
+):
+    """
+    十字路(juziro)がある「横方向の通り」および「縦方向の通り」の上にビル(bx, bz)が乗っているか判定する。
+    juziro_tiles_info: [(jx, jz, course_rot_y), ...]
+    - 横方向の十字路間隔は 240m のため、横方向 ±200m・縦幅 ±52m で横方向の通り全体を隙間なくカバー
+    - 縦方向の十字路間隔は 300m のため、縦方向 ±200m・横幅 ±52m で縦方向の通り全体を隙間なくカバー
+    """
+    max_reach = max(max_lateral_dist, max_longitudinal_dist) + clear_half_depth
+    max_reach_sq = max_reach * max_reach
+    for jx, jz, j_ry in juziro_tiles_info:
+        dx = bx - jx
+        dz = bz - jz
+        # 距離が遠すぎる場合は早期スキップ
+        if dx * dx + dz * dz > max_reach_sq:
+            continue
+        sin_y = math.sin(j_ry)
+        cos_y = math.cos(j_ry)
+        # 進行方向（縦方向）の距離
+        dist_forward = abs(dx * sin_y + dz * cos_y)
+        # 横方向（左右方向）の距離
+        dist_lateral = abs(dx * cos_y - dz * sin_y)
+
+        # 1. 十字路がある横方向の通り (前後 ±52m, 左右 ±200m)
+        if dist_forward < clear_half_depth and dist_lateral < max_lateral_dist:
+            return True
+        # 2. 十字路がある縦方向の通り (左右 ±52m, 前後 ±200m)
+        if dist_lateral < clear_half_depth and dist_forward < max_longitudinal_dist:
+            return True
+    return False
 
 
 def export_terrain(terrain_obj):
@@ -575,6 +823,8 @@ class GE3_OT_ImportLayout(Operator):
             bpy.data.objects.remove(obj, do_unlink=True)
 
         buildings_raw = []
+        floors_raw     = []
+        waypoints_raw  = []
         floor_count    = 0
         enemy_count    = 0
 
@@ -616,9 +866,14 @@ class GE3_OT_ImportLayout(Operator):
                     rx, ry, rz = 0.0, 0.0, 0.0
                     if len(parts) >= 13:
                         rx, ry, rz = float(parts[10]), float(parts[11]), float(parts[12])
-                    name = f"GE3_Floor_{floor_count:03d}"
-                    create_floor_obj(name, gx, gy, gz, rx, ry, rz)
-                    floor_count += 1
+                    explicit_juziro = None
+                    if len(parts) >= 14 and parts[13].strip() != "":
+                        explicit_juziro = (int(parts[13]) == 1)
+                    floors_raw.append((gx, gy, gz, rx, ry, rz, explicit_juziro))
+
+                elif obj_type == "WAYPOINT" and len(parts) >= 4:
+                    wx, wy, wz = float(parts[1]), float(parts[2]), float(parts[3])
+                    waypoints_raw.append((wx, wy, wz))
 
                 elif obj_type == "PLAYER" and len(parts) >= 4:
                     gx, gy, gz = float(parts[1]), float(parts[2]), float(parts[3])
@@ -642,6 +897,51 @@ class GE3_OT_ImportLayout(Operator):
                     name = f"GE3_Enemy_{enemy_count:02d}"
                     create_enemy_obj(name, gx, gy, gz, col_info, disabled)
                     enemy_count += 1
+
+        # ウェイポイント累積距離（300m置き判定用）
+        wp_dists = []
+        if waypoints_raw:
+            wp_dists.append(0.0)
+            for i in range(1, len(waypoints_raw)):
+                dx = waypoints_raw[i][0] - waypoints_raw[i - 1][0]
+                dy = waypoints_raw[i][1] - waypoints_raw[i - 1][1]
+                dz = waypoints_raw[i][2] - waypoints_raw[i - 1][2]
+                wp_dists.append(wp_dists[-1] + math.sqrt(dx * dx + dy * dy + dz * dz))
+
+        for gx, gy, gz, rx, ry, rz, explicit_juziro in floors_raw:
+            is_cross_road = False
+            if explicit_juziro is not None:
+                is_juziro = explicit_juziro
+            else:
+                if waypoints_raw:
+                    best_idx = 0
+                    best_d2 = 1e18
+                    for w_idx, (wx, wy, wz) in enumerate(waypoints_raw):
+                        d2 = (gx - wx) ** 2 + (gz - wz) ** 2
+                        if d2 < best_d2:
+                            best_d2 = d2
+                            best_idx = w_idx
+                    s_val = wp_dists[best_idx]
+                    d_lat = math.sqrt(best_d2)
+                else:
+                    s_val = gz
+                    d_lat = abs(gx)
+                rem = math.fmod(abs(s_val), 300.0)
+                is_juziro_row = (rem < 45.0 or rem > 255.0)
+                col_idx = int(round(d_lat / ROAD_WIDTH))
+                is_juziro_col = (abs(col_idx) % 3 == 0)
+                is_juziro = (is_juziro_row and is_juziro_col)
+                if is_juziro_row and not is_juziro_col:
+                    is_cross_road = True
+                    ry = ry + (math.pi * 0.5)
+
+            name = f"GE3_Floor_{floor_count:04d}"
+            floor_obj = create_floor_obj(name, gx, gy, gz, rx, ry, rz, is_juziro=is_juziro, is_cross_road=is_cross_road)
+            if waypoints_raw and floor_count < len(waypoints_raw) * 3:
+                floor_obj["ge3_lane"] = floor_count % 3
+            else:
+                floor_obj["ge3_lane"] = -1
+            floor_count += 1
 
         building_groups = {}
         for b in buildings_raw:
@@ -676,8 +976,40 @@ class GE3_OT_ImportLayout(Operator):
             
             building_count += 1
 
+        # ── プレイヤー進行ルート紐 (GE3_Player_Route) を生成 ──
+        if waypoints_raw:
+            route_ctrl_pts = [waypoints_raw[0]]
+            accum_d = 0.0
+            for i in range(1, len(waypoints_raw) - 1):
+                p_prev = waypoints_raw[i - 1]
+                p_curr = waypoints_raw[i]
+                p_next = waypoints_raw[i + 1]
+                seg_d = math.sqrt(sum((p_curr[c] - p_prev[c]) ** 2 for c in range(3)))
+                accum_d += seg_d
+
+                # 曲がり角かどうか判定
+                v1 = [p_curr[c] - p_prev[c] for c in range(3)]
+                v2 = [p_next[c] - p_curr[c] for c in range(3)]
+                l1 = math.sqrt(sum(c * c for c in v1))
+                l2 = math.sqrt(sum(c * c for c in v2))
+                is_corner = False
+                if l1 > 1.0 and l2 > 1.0:
+                    dot = max(-1.0, min(1.0, sum((v1[c] / l1) * (v2[c] / l2) for c in range(3))))
+                    if math.acos(dot) > math.radians(10.0):
+                        is_corner = True
+
+                # 300mごと（十字路位置）または曲がり角の頂点を制御点として残す
+                if accum_d >= 295.0 or is_corner:
+                    route_ctrl_pts.append(p_curr)
+                    accum_d = 0.0
+
+            if len(waypoints_raw) > 1:
+                route_ctrl_pts.append(waypoints_raw[-1])
+            create_route_curve_obj(route_ctrl_pts)
+
         msg = (f"Imported: {building_count} buildings (grouped), "
-               f"{floor_count} floors, {enemy_count} enemies")
+               f"{floor_count} floors, {enemy_count} enemies, 1 route curve")
+        self.report({"INFO"}, msg)
         set_material_preview_mode()
         return {"FINISHED"}
 
@@ -692,6 +1024,7 @@ class GE3_OT_ExportLayout(Operator):
         col = get_or_create_collection()
         lines = []
         terrain_obj = None
+        route_obj = bpy.data.objects.get(ROUTE_OBJ_NAME)
         
         # オブジェクト分類収集
         building_objs = []
@@ -699,6 +1032,7 @@ class GE3_OT_ExportLayout(Operator):
         dummy_floor_objs = []
         player_objs = []
         enemy_objs = []
+        juziro_tiles_info = []
 
         for obj in col.objects:
             ge3_type = obj.get("ge3_type", None)
@@ -710,18 +1044,28 @@ class GE3_OT_ExportLayout(Operator):
                     real_floor_objs.append(obj)
                 else:
                     dummy_floor_objs.append(obj)
+                if obj.get("ge3_juziro", 0) == 1:
+                    jx = obj.location.x / SCALE
+                    jz = obj.location.y / SCALE
+                    j_ry = obj.get("ge3_ry", obj.rotation_euler[2])
+                    juziro_tiles_info.append((jx, jz, j_ry))
             elif ge3_type == "PLAYER":
                 player_objs.append(obj)
             elif ge3_type == "ENEMY":
                 enemy_objs.append(obj)
             elif ge3_type == "TERRAIN":
                 terrain_obj = obj
+            elif ge3_type == "ROUTE" and route_obj is None:
+                route_obj = obj
 
-        # 本物道路は名前順（GE3_Floor_000, 001...）にソートしてゲーム側の (floorCount % 21) インデックス整合性を完全保証
+        # プレイヤー進行ルート紐 (GE3_Player_Route) からWAYPOINT列を抽出
+        route_waypoints = extract_route_waypoints(route_obj, sample_step=50.0, corner_radius=40.0) if route_obj else []
+
+        # 本物道路は名前順（GE3_Floor_0000, 0001...）にソートしてゲーム側の (floorCount % 21) インデックス整合性を完全保証
         real_floor_objs.sort(key=lambda x: x.name)
         sorted_floor_objs = real_floor_objs + dummy_floor_objs
 
-        # ── BUILDING 出力 (中央タイルと重なるビルを自動除外) ──
+        # ── BUILDING 出力 (進行ルート紐・中央タイル・十字路の横道と重なるビルを自動除外) ──
         center_tiles_pos = []
         for fobj in real_floor_objs + dummy_floor_objs:
             fgx = fobj.location.x / SCALE
@@ -730,18 +1074,25 @@ class GE3_OT_ExportLayout(Operator):
             if lane == 0 or abs(fgx) <= 30.0:
                 center_tiles_pos.append((fgx, fgz))
 
+        for wx, wy, wz in route_waypoints:
+            center_tiles_pos.append((wx, wz))
+
         for obj in building_objs:
             gx = obj.location.x / SCALE
             gz = obj.location.y / SCALE
             gy = obj.location.z / SCALE
 
-            # 中央タイルと重なっているか判定 (ROAD_CLEAR_HALF_WIDTH以内なら除外)
+            # 進行ルートや中央タイルと重なっているか判定 (ROAD_CLEAR_HALF_WIDTH以内なら除外)
             is_center_overlap = False
             for rx, rz in center_tiles_pos:
                 if (gx - rx)**2 + (gz - rz)**2 < ROAD_CLEAR_HALF_WIDTH**2:
                     is_center_overlap = True
                     break
             if is_center_overlap:
+                continue
+
+            # 十字路がある横方向の道路帯と重なっているビルを除外
+            if is_on_crossroad_horizontal_street(gx, gz, juziro_tiles_info):
                 continue
 
             floors = obj.ge3_floors if hasattr(obj, "ge3_floors") else obj.get("ge3_floors", 1)
@@ -775,8 +1126,9 @@ class GE3_OT_ExportLayout(Operator):
             rx = obj.get("ge3_rx", obj.rotation_euler[0])
             ry = obj.get("ge3_ry", obj.rotation_euler[2])
             rz = obj.get("ge3_rz", obj.rotation_euler[1])
+            is_juziro_val = 1 if obj.get("ge3_juziro", 0) else 0
             lines.append(f"FLOOR,{gx:.2f},{gy:.2f},{gz:.2f},"
-                         f"300.0,1.0,200.0,0.0,0.0,0.0,{rx:.4f},{ry:.4f},{rz:.4f}")
+                         f"300.0,1.0,200.0,0.0,0.0,0.0,{rx:.4f},{ry:.4f},{rz:.4f},{is_juziro_val}")
             
             lane = obj.get("ge3_lane", -1)
             all_floors.append((gz, gx, gy, lane))
@@ -811,30 +1163,34 @@ class GE3_OT_ExportLayout(Operator):
             lines.append(f"ENEMY,{gx:.2f},{gy:.2f},{gz:.2f},"
                          f"3.8,3.8,3.8,0.0,0.0,0.0" + col_str)
 
-        # ── 軌道（WAYPOINT）の抽出アルゴリズム (Nearest Neighborによる物理的接続順ソート) ──
-        center_floors = [f for f in all_floors if f[3] == 0]
-        if not center_floors:
-            center_floors = all_floors
+        # ── 軌道（WAYPOINT）の出力（GE3_Player_Route 紐があれば最優先で使用） ──
+        if route_waypoints and len(route_waypoints) >= 2:
+            for wx, wy, wz in route_waypoints:
+                lines.append(f"WAYPOINT,{wx:.2f},{wy:.2f},{wz:.2f}")
+        else:
+            center_floors = [f for f in all_floors if f[3] == 0]
+            if not center_floors:
+                center_floors = all_floors
 
-        player_pos = (0.0, 0.0, 0.0)
-        for obj in player_objs:
-            player_pos = (obj.location.x / SCALE, obj.location.z / SCALE, obj.location.y / SCALE)
-            break
+            player_pos = (0.0, 0.0, 0.0)
+            for obj in player_objs:
+                player_pos = (obj.location.x / SCALE, obj.location.z / SCALE, obj.location.y / SCALE)
+                break
 
-        road_floors = []
-        if center_floors:
-            remaining = list(center_floors)
-            remaining.sort(key=lambda x: (x[0] - player_pos[2])**2 + (x[1] - player_pos[0])**2)
-            curr = remaining.pop(0)
-            road_floors.append((curr[0], curr[1], curr[2]))
-            
-            while remaining:
-                remaining.sort(key=lambda x: (x[0] - curr[0])**2 + (x[1] - curr[1])**2 + (x[2] - curr[2])**2)
+            road_floors = []
+            if center_floors:
+                remaining = list(center_floors)
+                remaining.sort(key=lambda x: (x[0] - player_pos[2])**2 + (x[1] - player_pos[0])**2)
                 curr = remaining.pop(0)
                 road_floors.append((curr[0], curr[1], curr[2]))
+                
+                while remaining:
+                    remaining.sort(key=lambda x: (x[0] - curr[0])**2 + (x[1] - curr[1])**2 + (x[2] - curr[2])**2)
+                    curr = remaining.pop(0)
+                    road_floors.append((curr[0], curr[1], curr[2]))
 
-        for gz, gx, gy in road_floors:
-            lines.append(f"WAYPOINT,{gx:.2f},{gy:.2f},{gz:.2f}")
+            for gz, gx, gy in road_floors:
+                lines.append(f"WAYPOINT,{gx:.2f},{gy:.2f},{gz:.2f}")
 
         with open(LAYOUT_PATH, "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -843,11 +1199,170 @@ class GE3_OT_ExportLayout(Operator):
             export_terrain(terrain_obj)
 
         msg = f"Exported {len(lines)} objects to {LAYOUT_PATH}"
+        if route_waypoints:
+            msg += f" (Route waypoints: {len(route_waypoints)})"
         if terrain_obj:
             msg += " (Terrain exported to terrain.obj)"
         self.report({"INFO"}, msg)
         print(f"[Level Editor] {msg}")
         print("[Level Editor] Restart the game to apply changes!")
+        return {"FINISHED"}
+
+
+class GE3_OT_EditRouteCurve(Operator):
+    """プレイヤー進行ルート紐（GE3_Player_Route）を選択し、頂点を動かして曲げられる編集モードに切り替える"""
+    bl_idname = "ge3.edit_route_curve"
+    bl_label = "Edit Player Route String"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        route_obj = bpy.data.objects.get(ROUTE_OBJ_NAME)
+        if not route_obj:
+            # 存在しない場合は現在の中央車線から自動生成
+            bpy.ops.ge3.reset_route_string()
+            route_obj = bpy.data.objects.get(ROUTE_OBJ_NAME)
+            if not route_obj:
+                self.report({"WARNING"}, "ルート紐が見つかりません。先に都市を生成またはインポートしてください。")
+                return {"CANCELLED"}
+
+        if context.mode == 'EDIT_CURVE' and context.active_object == route_obj:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            # ルート変更に合わせてルート上の邪魔なビルを自動削除
+            bpy.ops.ge3.remove_overlapping_buildings()
+            self.report({"INFO"}, "ルート紐の編集を完了し、ルート上のビルを自動整理しました。")
+            return {"FINISHED"}
+
+        if context.mode != 'OBJECT':
+            try:
+                bpy.ops.object.mode_set(mode='OBJECT')
+            except Exception:
+                pass
+
+        bpy.ops.object.select_all(action='DESELECT')
+        route_obj.select_set(True)
+        context.view_layer.objects.active = route_obj
+        bpy.ops.object.mode_set(mode='EDIT')
+        self.report({"INFO"}, "ルート紐の編集モードに入りました！頂点を選択して G キーで自由に曲げられます。")
+        return {"FINISHED"}
+
+
+class GE3_OT_BendRouteString(Operator):
+    """進行ルート紐（GE3_Player_Route）の選択頂点（または選択タイル位置）から先を指定角度だけ曲げる"""
+    bl_idname = "ge3.bend_route_string"
+    bl_label = "Bend Player Route String"
+    bl_options = {"REGISTER", "UNDO"}
+
+    use_preset_angle: bpy.props.BoolProperty(default=False)
+    preset_angle: bpy.props.FloatProperty(default=90.0)
+
+    def execute(self, context):
+        route_obj = bpy.data.objects.get(ROUTE_OBJ_NAME)
+        if not route_obj or route_obj.type != 'CURVE' or not route_obj.data.splines:
+            bpy.ops.ge3.reset_route_string()
+            route_obj = bpy.data.objects.get(ROUTE_OBJ_NAME)
+            if not route_obj:
+                self.report({"WARNING"}, "GE3_Player_Route が見つかりません。")
+                return {"CANCELLED"}
+
+        angle_deg = self.preset_angle if self.use_preset_angle else context.scene.ge3_manual_turn_angle
+        rad = math.radians(angle_deg)
+
+        spline = route_obj.data.splines[0]
+        pts = spline.points
+        if len(pts) < 2:
+            return {"CANCELLED"}
+
+        pivot_idx = None
+        if context.mode == 'EDIT_CURVE' and context.active_object == route_obj:
+            for idx, pt in enumerate(pts):
+                if pt.select:
+                    pivot_idx = idx
+                    break
+        else:
+            active_obj = context.active_object
+            if active_obj and active_obj != route_obj:
+                ax, ay = active_obj.location.x, active_obj.location.y
+                best_d2 = 1e18
+                for idx, pt in enumerate(pts):
+                    wco = route_obj.matrix_world @ mathutils.Vector((pt.co.x, pt.co.y, pt.co.z))
+                    d2 = (wco.x - ax) ** 2 + (wco.y - ay) ** 2
+                    if d2 < best_d2:
+                        best_d2 = d2
+                        pivot_idx = idx
+
+        # 何も選択されていない場合は中間の十字路頂点をピボットにする
+        if pivot_idx is None:
+            pivot_idx = max(1, min(len(pts) - 2, len(pts) // 3))
+
+        px = pts[pivot_idx].co.x
+        py = pts[pivot_idx].co.y
+        # ゲーム座標で右(+X)が正の角度になるようBlender XY平面上で -rad 回転
+        a = -rad
+        cos_a = math.cos(a)
+        sin_a = math.sin(a)
+
+        for idx in range(pivot_idx + 1, len(pts)):
+            dx = pts[idx].co.x - px
+            dy = pts[idx].co.y - py
+            pts[idx].co.x = px + (dx * cos_a - dy * sin_a)
+            pts[idx].co.y = py + (dx * sin_a + dy * cos_a)
+
+        route_obj.data.update_tag()
+
+        # Edit Mode中なら一度Object Modeに戻してビル削除を実行し、再度Edit Modeに戻す
+        was_edit = (context.mode == 'EDIT_CURVE')
+        if was_edit:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.ge3.remove_overlapping_buildings()
+        if was_edit:
+            route_obj.select_set(True)
+            context.view_layer.objects.active = route_obj
+            bpy.ops.object.mode_set(mode='EDIT')
+
+        self.report({"INFO"}, f"進行ルート紐の頂点 #{pivot_idx} 以降を {angle_deg:.1f}度 曲げました。")
+        return {"FINISHED"}
+
+
+class GE3_OT_ResetRouteString(Operator):
+    """進行ルート紐（GE3_Player_Route）を中央車線（300mごとの十字路頂点）に沿って真っ直ぐリセットする"""
+    bl_idname = "ge3.reset_route_string"
+    bl_label = "Reset Player Route String"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        if context.mode != 'OBJECT':
+            try:
+                bpy.ops.object.mode_set(mode='OBJECT')
+            except Exception:
+                pass
+
+        col = get_or_create_collection()
+        center_floors = []
+        for obj in col.objects:
+            if obj.get("ge3_type") == "FLOOR" and obj.get("ge3_lane", -1) == 0:
+                gx = obj.location.x / SCALE
+                gz = obj.location.y / SCALE
+                gy = obj.location.z / SCALE
+                center_floors.append((gz, gx, gy))
+
+        center_floors.sort(key=lambda x: x[0])
+        route_pts = []
+        if center_floors:
+            for idx, (gz, gx, gy) in enumerate(center_floors):
+                rem = math.fmod(abs(gz), 300.0)
+                if idx == 0 or idx == len(center_floors) - 1 or (rem < 45.0 or rem > 255.0):
+                    route_pts.append((gx, gy, gz))
+        else:
+            for s in range(0, 6401, 300):
+                route_pts.append((0.0, 0.0, float(s)))
+
+        route_obj = create_route_curve_obj(route_pts)
+        if route_obj:
+            bpy.ops.object.select_all(action='DESELECT')
+            route_obj.select_set(True)
+            context.view_layer.objects.active = route_obj
+
+        self.report({"INFO"}, f"進行ルート紐 ({ROUTE_OBJ_NAME}) をリセットしました（頂点数: {len(route_pts)}）。")
         return {"FINISHED"}
 
 
@@ -900,6 +1415,15 @@ class GE3_OT_TurnRouteFromSelected(Operator):
                     obj.rotation_euler[2] -= rad
                     if "ge3_ry" in obj:
                         obj["ge3_ry"] = obj.rotation_euler[2]
+            elif ge3_type == "ROUTE" and obj.type == 'CURVE' and obj.data.splines:
+                a = -rad
+                for pt in obj.data.splines[0].points:
+                    if pt.co.y >= pivot_y - 0.1:
+                        dx = pt.co.x - pivot_x
+                        dy = pt.co.y - pivot_y
+                        pt.co.x = pivot_x + (dx * math.cos(a) - dy * math.sin(a))
+                        pt.co.y = pivot_y + (dx * math.sin(a) + dy * math.cos(a))
+                obj.data.update_tag()
 
         self.report({"INFO"}, f"{moved_count}個のオブジェクトを{turn_angle_deg}度曲げました。")
         return {"FINISHED"}
@@ -963,10 +1487,11 @@ class GE3_OT_AlignLanesToCenter(Operator):
                 other.location.y = cy + right_vec[1] * (road_width_b * offset_factor)
                 other.location.z = cz
 
-                # 回転を同期
+                # 回転を同期（横道タイルは +90度オフセットを維持）
+                cross_rot_offset = (math.pi * 0.5) if other.get("ge3_cross_road", 0) == 1 else 0.0
                 other.rotation_euler[0] = best_center.rotation_euler[0]
                 other.rotation_euler[1] = best_center.rotation_euler[1]
-                other.rotation_euler[2] = best_center.rotation_euler[2]
+                other.rotation_euler[2] = best_center.rotation_euler[2] + cross_rot_offset
 
                 if "ge3_rx" in other: other["ge3_rx"] = other.rotation_euler[0]
                 if "ge3_ry" in other: other["ge3_ry"] = other.rotation_euler[2]
@@ -981,8 +1506,8 @@ class GE3_OT_AlignLanesToCenter(Operator):
 class GE3_OT_RemoveOverlappingBuildings(Operator):
     """
     ビルが道路上やビル同士で重なっている場合に、重なっている方を削除する
-    ─ 中央車線(lane=0)タイルから ROAD_CLEAR_HALF_WIDTH(=45m) 以内のビルのみ削除
-      ※ 外側タイルは対象外なので、外側ビルは消えない
+    ─ 進行ルート紐(GE3_Player_Route)および中央車線(lane=0)タイルから ROAD_CLEAR_HALF_WIDTH 以内のビルを削除
+    ─ 十字路がある横方向の道路帯の上にあるビルを削除
     ─ ビル同士の距離が BUILDING_MIN_DIST 以下なら後ろのものを削除
     """
     bl_idname = "ge3.remove_overlapping_buildings"
@@ -992,16 +1517,28 @@ class GE3_OT_RemoveOverlappingBuildings(Operator):
     def execute(self, context):
         col = get_or_create_collection()
 
-        # ── 1. プレイヤーが通る「中央車線タイル」の正確な判定・収集 ──
+        # ── 1. プレイヤーが通る「中央車線タイル」および「十字路タイル」の収集 ──
         center_road_tiles = []
+        juziro_tiles_info = []
+        route_obj = bpy.data.objects.get(ROUTE_OBJ_NAME)
+
         for obj in col.objects:
             if obj.get("ge3_type") == "FLOOR":
                 gx = obj.location.x / SCALE
                 gz = obj.location.y / SCALE
                 lane = obj.get("ge3_lane", -1)
-                # lane=0、または直進時の中央道路タイル (|gx| <= 30.0) を中央タイルとみなす
                 if lane == 0 or abs(gx) <= 30.0:
                     center_road_tiles.append((gx, gz))
+                if obj.get("ge3_juziro", 0) == 1:
+                    j_ry = obj.get("ge3_ry", obj.rotation_euler[2])
+                    juziro_tiles_info.append((gx, gz, j_ry))
+            elif obj.get("ge3_type") == "ROUTE" and route_obj is None:
+                route_obj = obj
+
+        # 進行ルート紐のサンプル点も保護対象に追加
+        if route_obj:
+            for wx, wy, wz in extract_route_waypoints(route_obj, sample_step=25.0, corner_radius=40.0):
+                center_road_tiles.append((wx, wz))
 
         # 万が一中央タイルが特定できない場合の安全な自動抽出
         if not center_road_tiles:
@@ -1022,8 +1559,7 @@ class GE3_OT_RemoveOverlappingBuildings(Operator):
 
         to_delete = set()
 
-        # ── 3. 中央車線タイルとの重なりチェック ──
-        # ROAD_CLEAR_HALF_WIDTH(=45m) 以内のビルのみ削除対象
+        # ── 3. 進行ルート・中央車線タイル・十字路横道との重なりチェック ──
         for obj, bx, bz in buildings:
             if obj.name in to_delete:
                 continue
@@ -1032,6 +1568,10 @@ class GE3_OT_RemoveOverlappingBuildings(Operator):
                 if dist_sq < ROAD_CLEAR_HALF_WIDTH**2:
                     to_delete.add(obj.name)
                     break
+            if obj.name in to_delete:
+                continue
+            if is_on_crossroad_horizontal_street(bx, bz, juziro_tiles_info):
+                to_delete.add(obj.name)
 
         # ── 4. ビル同士の重なりチェック ──
         for i in range(len(buildings)):
@@ -1054,7 +1594,7 @@ class GE3_OT_RemoveOverlappingBuildings(Operator):
                 bpy.data.objects.remove(obj, do_unlink=True)
                 deleted_count += 1
 
-        self.report({"INFO"}, f"{deleted_count} 個の重なりビルを削除しました。(中央車線±{ROAD_CLEAR_HALF_WIDTH:.0f}m保護)")
+        self.report({"INFO"}, f"{deleted_count} 個の重なりビルを削除しました。(進行ルート・十字路横道保護)")
         return {"FINISHED"}
 
 
@@ -1366,28 +1906,66 @@ class GE3_OT_GenerateCity(Operator):
         terrain_obj["ge3_type"] = "TERRAIN"
         
         # ──────────────────────────────────────────
-        # 2. 道路 (FLOOR) の生成 (軌道に沿って7列配置)
+        # 2. 道路 (FLOOR) の生成 (100m間隔。300m置きに juziro.jpg、それ以外は douro.jpg)
+        #    ★ 十字路(80m×80m)・横道(80m×80m)・縦道(80m×110m、中心95m/205m)で隙間0m・重なり0mでぴったり接続
         # ──────────────────────────────────────────
-        floor_size_z = 100.0  # タイル1枚のZ方向長さ（ゲームユニット）
+        floor_size_z = 100.0  # タイル1枚のZ方向基準ピッチ（ゲームユニット）
         num_floors_per_lane = math.ceil(city_length / floor_size_z)
         
         floor_count = 0
         # タイルの (gx, gz) リスト（重複チェック用）
         all_tile_positions = []       # 全タイル位置
         center_tile_positions = []    # 中央3列のみ（ビル除外チェック用）
+        juziro_tiles_info = []        # 十字路タイル情報 [(gx, gz, course_rot_y), ...]（十字路の横道からビルを排除するため）
 
         for i in range(num_floors_per_lane):
-            z_val = i * floor_size_z
+            z_val_base = i * floor_size_z
+
+            # 縦方向（進行方向）の300m置き判定 (0m, 300m, 600m, 900m... = 3タイル置き)
+            rem = math.fmod(abs(z_val_base), 300.0)
+            is_juziro_row = (rem < 45.0 or rem > 255.0)
+
+            # 十字路(±40m)と縦道(長さ110m=±55m)が隙間なくぴったりくっつく位置 (95m, 205m) に配置
+            if i % 3 == 1:
+                z_val = z_val_base - 5.0
+            elif i % 3 == 2:
+                z_val = z_val_base + 5.0
+            else:
+                z_val = z_val_base
+
             pos, dir_vec, right_vec, rot_y, rot_x = get_path_info(path_points, z_val, step_distance)
 
             for lane_idx in range(num_lanes):
                 offset = LANE_OFFSETS[lane_idx]
+                # 横方向（左右方向）も3タイル置き（中央0, ±3, ±6, ±9）に十字路を配置
+                col_idx = int(round(offset / road_width))
+                is_juziro_col = (abs(col_idx) % 3 == 0)
+
                 gx = pos[0] + offset * right_vec[0]
                 gy = pos[1] + offset * right_vec[1]
                 gz = pos[2] + offset * right_vec[2]
 
-                name = f"GE3_Floor_{floor_count:03d}"
-                floor_obj = create_floor_obj(name, gx, gy, gz, rot_x, rot_y, 0.0)
+                if is_juziro_row and is_juziro_col:
+                    is_tile_juziro = True
+                    is_cross_road = False
+                    tile_rot_y = rot_y
+                    juziro_tiles_info.append((gx, gz, rot_y))
+                elif is_juziro_row and not is_juziro_col:
+                    # 横方向に並ぶ十字路同士を繋ぐ横道（90度回転）
+                    is_tile_juziro = False
+                    is_cross_road = True
+                    tile_rot_y = rot_y + (math.pi * 0.5)
+                else:
+                    # 縦方向（進行方向）に並ぶ十字路同士を繋ぐ縦道
+                    is_tile_juziro = False
+                    is_cross_road = False
+                    tile_rot_y = rot_y
+
+                name = f"GE3_Floor_{floor_count:04d}"
+                floor_obj = create_floor_obj(
+                    name, gx, gy, gz, rot_x, tile_rot_y, 0.0,
+                    is_juziro=is_tile_juziro, is_cross_road=is_cross_road
+                )
                 # lane 0,1,2 (中央・±80m) = リアルタイル，lane 3以降 = ダミー（WAYPOINT生成から除外）
                 if lane_idx < NUM_REAL_LANES:
                     floor_obj["ge3_lane"] = lane_idx  # 0,1,2 = WAYPOINTSort対象
@@ -1395,8 +1973,8 @@ class GE3_OT_GenerateCity(Operator):
                     floor_obj["ge3_lane"] = -1  # ダミー（視覚的のみ）
                 floor_count += 1
                 all_tile_positions.append((gx, gz))
-                # lane 0,1,2 = 中央・±80m の3列のみをビル除外対象にする
-                if lane_idx < NUM_REAL_LANES:
+                # 十字路がある縦通り・横通り（および中央車線）をビル除外対象にする
+                if lane_idx == 0 or is_juziro_row or is_juziro_col:
                     center_tile_positions.append((gx, gz))
 
         # ──────────────────────────────────────────
@@ -1452,12 +2030,25 @@ class GE3_OT_GenerateCity(Operator):
                 
                 # ── ダミー道路の配置 ──
                 for d in range(1, max_dummy_floors + 1):
-                    d_dist = d * floor_size_z
+                    d_dist_base = d * floor_size_z
+                    # ダミー道路でも縦・横ともに300m置き判定 & 隙間なしぴったり接続オフセット
+                    rem_dummy = math.fmod(abs(progress_start + d_dist_base), 300.0)
+                    is_juziro_row_dummy = (rem_dummy < 45.0 or rem_dummy > 255.0)
+                    if not is_juziro_row_dummy:
+                        if rem_dummy < 150.0:
+                            d_dist = d_dist_base - 5.0
+                        else:
+                            d_dist = d_dist_base + 5.0
+                    else:
+                        d_dist = d_dist_base
+
                     p_dummy = [p_start[c] + d_dist * dir_straight[c] for c in range(3)]
                     dummy_straight_segments.append((p_dummy, right_vec, rot_y))
-                    
+
                     for lane_idx in range(-10, 11):
                         offset = lane_idx * road_width
+                        is_juziro_col_dummy = (abs(lane_idx) % 3 == 0)
+
                         gx = p_dummy[0] + offset * right_vec[0]
                         gy = p_dummy[1] + offset * right_vec[1]
                         gz = p_dummy[2] + offset * right_vec[2]
@@ -1481,16 +2072,35 @@ class GE3_OT_GenerateCity(Operator):
                         if overlap:
                             continue
                         
-                        name = f"GE3_Floor_Dummy_{dummy_floor_count:03d}"
+                        if is_juziro_row_dummy and is_juziro_col_dummy:
+                            is_tile_juziro_dummy = True
+                            is_cross_road_dummy = False
+                            tile_rot_y_dummy = rot_y
+                            juziro_tiles_info.append((gx, gz, rot_y))
+                        elif is_juziro_row_dummy and not is_juziro_col_dummy:
+                            is_tile_juziro_dummy = False
+                            is_cross_road_dummy = True
+                            tile_rot_y_dummy = rot_y + (math.pi * 0.5)
+                        else:
+                            is_tile_juziro_dummy = False
+                            is_cross_road_dummy = False
+                            tile_rot_y_dummy = rot_y
+
+                        name = f"GE3_Floor_Dummy_{dummy_floor_count:04d}"
                         # 中間層レイヤー (0.00m) として配置 (本物道路 +0.05m / 地形 -0.15m)
-                        floor_obj = create_floor_obj(name, gx, gy, gz, rot_x, rot_y, 0.0)
+                        floor_obj = create_floor_obj(
+                            name, gx, gy, gz, rot_x, tile_rot_y_dummy, 0.0,
+                            is_juziro=is_tile_juziro_dummy, is_cross_road=is_cross_road_dummy
+                        )
                         floor_obj["ge3_lane"] = -1  # WAYPOINTから除外
                         dummy_floor_count += 1
-                        dummy_floor_positions.append((gx, gz))
+                        if is_juziro_row_dummy or is_juziro_col_dummy:
+                            dummy_floor_positions.append((gx, gz))
                         dummy_tile_hash.insert(gx, gz)
 
         # ──────────────────────────────────────────
         # 3. ビル (BUILDING) の自動生成 (軌道に沿って配置)
+        #    ★ 十字路がある横方向・縦方向の通りにはビルを置かない
         #    ★ 道路タイル範囲内にはビルを置かない
         #    ★ ビル同士の重なりを排除
         # ──────────────────────────────────────────
@@ -1498,23 +2108,17 @@ class GE3_OT_GenerateCity(Operator):
         enemy_count = 0
         random.seed(42)
         
-        # ビルの配置列（21列道路に対応した広範囲配置）
+        # ビルの配置列（十字路がある縦方向の通り 0m, ±240m, ±480m, ±720m の前後±52mを完全に空けた街区列）
         building_cols = [
-             -45.0,   45.0,
              -85.0,   85.0,
             -125.0,  125.0,
             -165.0,  165.0,
-            -205.0,  205.0,
-            -245.0,  245.0,
-            -285.0,  285.0,
             -325.0,  325.0,
             -365.0,  365.0,
             -405.0,  405.0,
-            -445.0,  445.0,
-            -485.0,  485.0,
-            -525.0,  525.0,
             -565.0,  565.0,
             -605.0,  605.0,
+            -645.0,  645.0,
         ]
         MAX_BUILDINGS = 3000
         building_interval = 45.0
@@ -1542,6 +2146,11 @@ class GE3_OT_GenerateCity(Operator):
             gz_val = 50.0 + i * building_interval
             if gz_val > city_length - 100.0:
                 continue
+
+            # ★ 十字路がある横方向の通り（300m置きの前後 ±52m）にはビルを一切配置しない
+            rem_b = math.fmod(abs(gz_val), 300.0)
+            if rem_b < 52.0 or rem_b > 248.0:
+                continue
                 
             pos, dir_vec, right_vec, rot_y, rot_x = get_path_info(path_points, gz_val, step_distance)
             
@@ -1549,32 +2158,28 @@ class GE3_OT_GenerateCity(Operator):
                 if building_count >= MAX_BUILDINGS:
                     break
                     
-                density_threshold = building_density if abs(col_x) > 130.0 else min(0.95, building_density + 0.3)
+                density_threshold = building_density if abs(col_x) > 180.0 else min(0.95, building_density + 0.3)
                 if random.random() > density_threshold:
                     continue
                     
                 gx = pos[0] + col_x * right_vec[0]
                 gz = pos[2] + col_x * right_vec[2]
 
-                # ── 道路タイルとの重なりチェック（Spatial Hash） ──
+                # ── 十字路がある横方向・縦方向の道路帯との重なりチェック ──
+                if is_on_crossroad_horizontal_street(gx, gz, juziro_tiles_info):
+                    continue
+
+                # ── 十字路がある縦通り・横通りタイルとの重なりチェック（Spatial Hash） ──
                 too_close_to_road = False
-                # 中央3列の保護（38m）
                 nearby_centers = center_tile_hash.get_nearby(gx, gz)
                 for tx, tz in nearby_centers:
                     if (gx - tx)**2 + (gz - tz)**2 < ROAD_CLEAR_HALF_WIDTH**2:
                         too_close_to_road = True
                         break
-                # その他のすべての車線およびダミー道路からの保護（25m）
-                if not too_close_to_road:
-                    nearby_all = all_tile_hash.get_nearby(gx, gz)
-                    for tx, tz in nearby_all:
-                        if (gx - tx)**2 + (gz - tz)**2 < BUILDING_ROAD_CLEAR_DIST**2:
-                            too_close_to_road = True
-                            break
                 if not too_close_to_road:
                     nearby_dummies = dummy_floor_hash.get_nearby(gx, gz)
                     for tx, tz in nearby_dummies:
-                        if (gx - tx)**2 + (gz - tz)**2 < BUILDING_ROAD_CLEAR_DIST**2:
+                        if (gx - tx)**2 + (gz - tz)**2 < ROAD_CLEAR_HALF_WIDTH**2:
                             too_close_to_road = True
                             break
                 if too_close_to_road:
@@ -1596,7 +2201,7 @@ class GE3_OT_GenerateCity(Operator):
                 terrain_factor = (base_gy - pos[1]) / max(max_height, 1.0)
                 if abs(col_x) > 200.0:
                     floors = int(6 + terrain_factor * 10 + random.randint(0, 5))
-                elif abs(col_x) < 60.0:
+                elif abs(col_x) < 100.0:
                     floors = int(3 + terrain_factor * 4 + random.randint(0, 3))
                 else:
                     floors = int(2 + terrain_factor * 5 + random.randint(0, 4))
@@ -1668,17 +2273,22 @@ class GE3_OT_GenerateCity(Operator):
                 max_b_dist = max_dummy_floors * floor_size_z
                 b_steps = int(max_b_dist / building_interval)
                 
-                # ダミービルのX列は道路より外側のみ（軌道と重ならない列）
+                # ダミービルのX列も十字路の縦通り（0m, ±240m, ±480m）を避けた街区列に配置
                 dummy_building_cols_signed = [
+                    -85.0, 85.0,
                     -125.0, 125.0,
                     -165.0, 165.0,
-                    -205.0, 205.0,
-                    -285.0, 285.0,
+                    -325.0, 325.0,
                     -365.0, 365.0,
+                    -405.0, 405.0,
                 ]
                 
                 for b_step in range(b_steps):
                     d_dist = 40.0 + b_step * building_interval
+                    # ダミー道路上の十字路横道（300m置き）も避ける
+                    rem_db = math.fmod(abs(progress_start + d_dist), 300.0)
+                    if rem_db < 52.0 or rem_db > 248.0:
+                        continue
                     p_b_dummy = [p_start[c] + d_dist * dir_straight[c] for c in range(3)]
                     
                     for col_x in dummy_building_cols_signed:
@@ -1687,11 +2297,14 @@ class GE3_OT_GenerateCity(Operator):
                             
                         gx = p_b_dummy[0] + col_x * right_vec[0]
                         gz = p_b_dummy[2] + col_x * right_vec[2]
+
+                        if is_on_crossroad_horizontal_street(gx, gz, juziro_tiles_info):
+                            continue
                         
-                        # 道路タイルとの重なりチェック（本物＋ダミー道路）
+                        # 十字路がある縦通り・横通りタイルとの重なりチェック
                         overlap = False
-                        nearby_all = all_tile_hash.get_nearby(gx, gz)
-                        for tx, tz in nearby_all:
+                        nearby_centers = center_tile_hash.get_nearby(gx, gz)
+                        for tx, tz in nearby_centers:
                             if (gx - tx)**2 + (gz - tz)**2 < ROAD_CLEAR_HALF_WIDTH**2:
                                 overlap = True
                                 break
@@ -1790,7 +2403,7 @@ class GE3_OT_GenerateCity(Operator):
                     pass
                     
         # ──────────────────────────────────────────
-        # 3.9 重なり合うビルの最終クリーンアップ (全道路 & ビル同士)
+        # 3.9 重なり合うビルの最終クリーンアップ (全道路 & 十字路縦横通り & ビル同士)
         #     ★ 配置チェックをすり抜けたものや、ダミービル同士の重なりをここで一掃
         # ──────────────────────────────────────────
         all_buildings = []
@@ -1800,12 +2413,17 @@ class GE3_OT_GenerateCity(Operator):
                 
         to_delete_buildings = set()
         
-        # 1. 道路（本物+ダミー）との重なりチェック (Spatial Hash 化)
+        # 1. 十字路がある縦通り・横通りおよび道路との重なりチェック (Spatial Hash 化)
         for b_obj in all_buildings:
             bx = b_obj.location.x / SCALE
             bz = b_obj.location.y / SCALE
+
+            # 十字路がある横方向・縦方向の通りにあるビルを削除
+            if is_on_crossroad_horizontal_street(bx, bz, juziro_tiles_info):
+                to_delete_buildings.add(b_obj.name)
+                continue
             
-            # プレイヤー走行レーン（lane 0, 1, 2）との衝突判定 (55m保護)
+            # 十字路縦通り・横通りタイルとの衝突判定
             too_close = False
             nearby_centers = center_tile_hash.get_nearby(bx, bz)
             for tx, tz in nearby_centers:
@@ -1816,19 +2434,9 @@ class GE3_OT_GenerateCity(Operator):
                 to_delete_buildings.add(b_obj.name)
                 continue
                 
-            # その他すべての道路およびダミー道路との衝突判定 (38m保護)
-            nearby_all = all_tile_hash.get_nearby(bx, bz)
-            for tx, tz in nearby_all:
-                if (bx - tx)**2 + (bz - tz)**2 < BUILDING_ROAD_CLEAR_DIST**2:
-                    too_close = True
-                    break
-            if too_close:
-                to_delete_buildings.add(b_obj.name)
-                continue
-                
             nearby_dummies = dummy_floor_hash.get_nearby(bx, bz)
             for tx, tz in nearby_dummies:
-                if (bx - tx)**2 + (bz - tz)**2 < BUILDING_ROAD_CLEAR_DIST**2:
+                if (bx - tx)**2 + (bz - tz)**2 < ROAD_CLEAR_HALF_WIDTH**2:
                     too_close = True
                     break
             if too_close:
@@ -1865,18 +2473,28 @@ class GE3_OT_GenerateCity(Operator):
                     pass
                     
         # ──────────────────────────────────────────
-        # 4. プレイヤー (PLAYER) の初期位置配置
+        # 4. プレイヤー (PLAYER) の初期位置配置 & 進行ルート紐 (GE3_Player_Route) の生成
         # ──────────────────────────────────────────
         create_player_obj("GE3_Player_Start", 0.0, -3.0, 0.0)
+
+        # 300mごとの十字路位置に頂点を持つ1本の進行ルート紐（Curve）を生成
+        route_points_game = []
+        route_step = 300.0
+        num_route_pts = int(city_length / route_step) + 1
+        for r_idx in range(num_route_pts):
+            z_r = min(city_length, r_idx * route_step)
+            r_pos, _, _, _, _ = get_path_info(path_points, z_r, step_distance)
+            route_points_game.append((r_pos[0], r_pos[1], r_pos[2]))
+        create_route_curve_obj(route_points_game)
         
         # ──────────────────────────────────────────
         # 5. 地形を terrain.obj としてエクスポート
         # ──────────────────────────────────────────
         export_terrain(terrain_obj)
         
-        msg = (f"Generated: {building_count} buildings (including dummy), "
+        msg = (f"Generated: {building_count} buildings, "
                f"{floor_count} floors ({num_lanes} lanes), {dummy_floor_count} dummy floors, "
-               f"{enemy_count} enemies. Terrain exported.")
+               f"{enemy_count} enemies, and Player Route String ({ROUTE_OBJ_NAME}).")
         self.report({"INFO"}, msg)
         set_material_preview_mode()
         return {"FINISHED"}
@@ -1920,6 +2538,32 @@ class GE3_PT_LevelEditorPanel(Panel):
         
         box_gen.separator()
         box_gen.operator("ge3.generate_city", text="Generate Terrain & City", icon="MOD_OCEAN")
+
+        # ★ プレイヤー進行ルート紐（1本の線）編集ボックス
+        box_route = layout.box()
+        box_route.label(text="Player Route String (進行ルート紐)", icon="CURVE_DATA")
+        is_editing_route = (
+            context.active_object is not None
+            and context.active_object.name == ROUTE_OBJ_NAME
+            and context.mode == 'EDIT_CURVE'
+        )
+        edit_btn_text = "Finish Editing Route (編集完了)" if is_editing_route else "Edit Route String (頂点移動/曲げ編集)"
+        box_route.operator("ge3.edit_route_curve", text=edit_btn_text, icon="EDITMODE_HLT")
+
+        row_bend = box_route.row(align=True)
+        op_left = row_bend.operator("ge3.bend_route_string", text="◀ 左90°曲げる", icon="LOOP_BACK")
+        op_left.use_preset_angle = True
+        op_left.preset_angle = -90.0
+
+        op_right = row_bend.operator("ge3.bend_route_string", text="右90°曲げる ▶", icon="LOOP_FORWARDS")
+        op_right.use_preset_angle = True
+        op_right.preset_angle = 90.0
+
+        box_route.prop(scene, "ge3_manual_turn_angle", text="Bend Angle (deg)")
+        op_custom = box_route.operator("ge3.bend_route_string", text="指定角度で紐を曲げる", icon="FORCE_CURVE")
+        op_custom.use_preset_angle = False
+
+        box_route.operator("ge3.reset_route_string", text="Reset Route String (中央にリセット)", icon="FILE_REFRESH")
 
         # 手動編集支援ツール
         box_manual = layout.box()
@@ -1972,4 +2616,165 @@ class GE3_PT_LevelEditorPanel(Panel):
         layout.label(text=f"Road lanes: {NUM_ROAD_LANES} (±{ROAD_WIDTH * (NUM_ROAD_LANES // 2):.0f}m)", icon="DRIVER_DISTANCE")
 
 
+# ─────────────────────────────────────────────────────────────────────
+# スクリプト直接実行時（Scriptingタブから ▶ で実行した場合）の登録処理
+# ─────────────────────────────────────────────────────────────────────
+_standalone_classes = [
+    GE3_OT_ImportLayout,
+    GE3_OT_ExportLayout,
+    GE3_OT_GenerateCity,
+    GE3_OT_EditRouteCurve,
+    GE3_OT_BendRouteString,
+    GE3_OT_ResetRouteString,
+    GE3_OT_TurnRouteFromSelected,
+    GE3_OT_AlignLanesToCenter,
+    GE3_OT_RemoveOverlappingBuildings,
+    GE3_OT_RemoveOverlappingFloors,
+    GE3_PT_LevelEditorPanel,
+]
 
+
+def register():
+    import sys
+    script_dir = os.path.dirname(LAYOUT_PATH)
+    editor_dir = os.path.join(script_dir, "blender_scripts", "ge3_level_editor")
+    if os.path.exists(editor_dir) and editor_dir not in sys.path:
+        sys.path.append(editor_dir)
+
+    extra_classes = []
+    try:
+        import collider
+        import disabled
+        extra_classes = [
+            collider.GE3_OT_AddCollider,
+            collider.GE3_PT_ColliderPanel,
+            disabled.GE3_OT_AddDisabled,
+            disabled.GE3_PT_DisabledPanel,
+        ]
+        if getattr(collider, "draw_handle", None) is None:
+            collider.draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+                collider.draw_collider_callback, (), 'WINDOW', 'POST_VIEW'
+            )
+    except Exception as e:
+        print(f"[Level Editor] Optional modules note: {e}")
+
+    for cls in _standalone_classes + extra_classes:
+        try:
+            bpy.utils.register_class(cls)
+        except ValueError:
+            try:
+                bpy.utils.unregister_class(cls)
+                bpy.utils.register_class(cls)
+            except Exception:
+                pass
+
+    bpy.types.Object.ge3_floors = bpy.props.IntProperty(
+        name="Floors",
+        description="Number of floors for the building",
+        default=1,
+        min=1,
+        max=100,
+        update=update_building_floors
+    )
+
+    bpy.types.Scene.ge3_city_length = bpy.props.FloatProperty(
+        name="City Length",
+        description="Total length of the generated city in Z direction (game units)",
+        default=3200.0,
+        min=500.0,
+        max=10000.0
+    )
+    bpy.types.Scene.ge3_building_density = bpy.props.FloatProperty(
+        name="Building Density",
+        description="Probability of spawning a building at each slot",
+        default=0.7,
+        min=0.0,
+        max=1.0
+    )
+    bpy.types.Scene.ge3_max_floors = bpy.props.IntProperty(
+        name="Max Floors",
+        description="Maximum height of buildings in floors",
+        default=12,
+        min=1,
+        max=50
+    )
+    bpy.types.Scene.ge3_height_noise_scale = bpy.props.FloatProperty(
+        name="Terrain Noise Scale",
+        description="Scale of the terrain height variations (linked to size)",
+        default=400.0,
+        min=50.0,
+        max=2000.0
+    )
+    bpy.types.Scene.ge3_height_noise_strength = bpy.props.FloatProperty(
+        name="Terrain Noise Strength",
+        description="Multiplier for the terrain height",
+        default=1.2,
+        min=0.0,
+        max=5.0
+    )
+    bpy.types.Scene.ge3_curve_strength = bpy.props.FloatProperty(
+        name="Curve Strength",
+        description="Horizontal road curving strength",
+        default=30.0,
+        min=0.0,
+        max=100.0
+    )
+    bpy.types.Scene.ge3_slope_strength = bpy.props.FloatProperty(
+        name="Slope Strength",
+        description="Vertical road slope strength",
+        default=8.0,
+        min=0.0,
+        max=30.0
+    )
+    bpy.types.Scene.ge3_enemy_spawn_rate = bpy.props.FloatProperty(
+        name="Enemy Spawn Rate",
+        description="Probability of spawning an enemy near buildings",
+        default=0.05,
+        min=0.0,
+        max=0.5
+    )
+    bpy.types.Scene.ge3_num_sections = bpy.props.IntProperty(
+        name="Num Sections",
+        description="Number of sections in the course",
+        default=40,
+        min=5,
+        max=100
+    )
+    bpy.types.Scene.ge3_section_length = bpy.props.FloatProperty(
+        name="Section Length",
+        description="Length of each section (game units)",
+        default=160.0,
+        min=50.0,
+        max=500.0
+    )
+    bpy.types.Scene.ge3_section_behaviors = bpy.props.StringProperty(
+        name="Section Behaviors",
+        description="Behavior for each section (S: Straight, R: Right, L: Left, U: Up, D: Down)",
+        default="S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S,S"
+    )
+    bpy.types.Scene.ge3_curve_angle = bpy.props.FloatProperty(
+        name="Curve Angle",
+        description="Turn angle in degrees for R/L sections",
+        default=22.5,
+        min=0.0,
+        max=90.0
+    )
+    bpy.types.Scene.ge3_slope_height = bpy.props.FloatProperty(
+        name="Slope Height",
+        description="Height offset in game units for U/D sections",
+        default=15.0,
+        min=0.0,
+        max=50.0
+    )
+    bpy.types.Scene.ge3_manual_turn_angle = bpy.props.FloatProperty(
+        name="Manual Turn Angle",
+        description="Angle in degrees to turn the route from selected object",
+        default=15.0,
+        min=-90.0,
+        max=90.0
+    )
+    print("[Level Editor] Registered successfully! Open N-panel -> 'GE3 Sync' tab.")
+
+
+if __name__ == "__main__":
+    register()

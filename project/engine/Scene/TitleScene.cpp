@@ -43,6 +43,7 @@ void TitleScene::Initialize() {
     transformResource_->Map(0, nullptr, reinterpret_cast<void**>(&transformData_));
     transformData_->WVP = MakeIdentity4x4();
     transformData_->World = MakeIdentity4x4();
+    transformData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
     directionalLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
     directionalLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData_));
@@ -80,20 +81,14 @@ void TitleScene::Update() {
     if (inputDelay_ > 0) {
         inputDelay_--;
     } else {
-        if (isTransitioningToGame_) {
-            transitionTimer_ += 1.0f / 60.0f;
-            if (transitionTimer_ >= kTransitionDuration) {
-                SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
+        if (!isTransitioningToGame_ && input_->IsKeyTriggered(DIK_SPACE)) {
+            isTransitioningToGame_ = true;
+            transitionTimer_ = 0.0f;
+            if (gameplayScene_) {
+                gameplayScene_->TriggerTitleTransitionBoost();
             }
-        } else {
-            // スペースキーでゲームプレイシーンへ遷移（演出開始）
-            if (input_->IsKeyTriggered(DIK_SPACE)) {
-                isTransitioningToGame_ = true;
-                transitionTimer_ = 0.0f;
-                if (gameplayScene_) {
-                    gameplayScene_->TriggerTitleTransitionBoost();
-                }
-            }
+            // SPACE押下と同時に斜め斬撃＆上下分割による画面遷移を即座に開始
+            SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
         }
     }
 }
@@ -108,6 +103,7 @@ void TitleScene::Draw() {
     D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = DirectXCommon::GetInstance()->GetDsvHandle();
 
     // 2. 深度バッファのみをクリア（背景画像の上にタイトル3Dモデルを重ねるため）
+    DirectXCommon::GetInstance()->TransitionDepthStencilState(D3D12_RESOURCE_STATE_DEPTH_WRITE);
     commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
     // デスクリプタヒープのセット

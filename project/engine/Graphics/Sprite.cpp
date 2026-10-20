@@ -60,6 +60,7 @@ void Sprite::Initialize(const std::string& textureName, Vector2 position) {
     wvpResource_->Map(0, nullptr, reinterpret_cast<void**>(&wvpData_));
     wvpData_->WVP = MakeIdentity4x4();
     wvpData_->World = MakeIdentity4x4();
+    wvpData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
     // 初期トランスフォーム
     transform = { {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f}, {position.x, position.y, 0.0f} };
@@ -103,6 +104,20 @@ void Sprite::Draw(ID3D12GraphicsCommandList* commandList, const Matrix4x4& viewP
 
     // 6頂点描画
     commandList->DrawInstanced(6, 1, 0, 0);
+}
+
+void Sprite::DrawCustomSrv(ID3D12GraphicsCommandList* commandList, const Matrix4x4& viewProjection, D3D12_GPU_DESCRIPTOR_HANDLE customSrvHandle, UINT vertexCount, UINT startVertexLocation) {
+    Matrix4x4 worldMatrix = MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+    wvpData_->World = worldMatrix;
+    wvpData_->WVP = Multiply(worldMatrix, viewProjection);
+
+    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    commandList->IASetVertexBuffers(0, 1, &vertexBufferView_);
+    commandList->SetGraphicsRootConstantBufferView(0, materialResource_->GetGPUVirtualAddress());
+    commandList->SetGraphicsRootConstantBufferView(1, wvpResource_->GetGPUVirtualAddress());
+    commandList->SetGraphicsRootDescriptorTable(2, customSrvHandle);
+
+    commandList->DrawInstanced(vertexCount, 1, startVertexLocation, 0);
 }
 
 void Sprite::SetColor(const Vector4& color) {

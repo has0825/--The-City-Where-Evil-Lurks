@@ -18,6 +18,7 @@ public:
     void Initialize(const std::string& textureName, Vector2 position);
     void Update();
     void Draw(ID3D12GraphicsCommandList* commandList, const Matrix4x4& viewProjection);
+    void DrawCustomSrv(ID3D12GraphicsCommandList* commandList, const Matrix4x4& viewProjection, D3D12_GPU_DESCRIPTOR_HANDLE customSrvHandle, UINT vertexCount = 6, UINT startVertexLocation = 0);
 
     // 範囲指定で切り取る (左上XY, 幅, 高さ)
     void SetTextureRect(float left, float top, float width, float height);

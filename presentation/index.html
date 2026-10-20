@@ -189,36 +189,162 @@
                 </div>
             </section>
 
-            <!-- Slide 6: 技術トピック③ -->
+            <!-- Slide 6-1: プレイヤーの動きと操作感へのこだわり -->
             <section class="slide" id="slide-6">
-                <div class="slide-content">
-                    <h2 class="section-title"><span class="neon-text">05</span> プレイヤー関連：3D戦闘機制御とバレルロール無敵回避＆ブースト加速G演出</h2>
-                    <div class="grid-2col-heavy-left">
-                        <div class="card glass highlight-card">
-                            <h3>バレルロールによる無敵回避挙動</h3>
-                            <p><strong>【目的】</strong> レールシューティングにおける単調な移動を排し、敵の苛烈な弾幕を避ける戦術的回避操作を提供する。</p>
-                            <p><strong>【解決】</strong> 左Shiftキーをトリガーに360度ローリング（<code>playerRotationRoll_</code>）を行い、ロール進行タイマー（0.65秒）と連動した無敵回避時間をゲームループ内で処理。</p>
-                            
-                            <h3>ブースト時のラジアルブラーポストエフェクト</h3>
-                            <p><strong>【目的】</strong> 最高速度480m/sのブースト中において、速度数値を上げるだけでなく、圧倒的な「速度感と重力G」を視覚的にフィードバックする。</p>
-                            <p><strong>【解決】</strong> 加速開始時にピクセルシェーダで動作する「放射状ぼかし」ポストプロセスを適用。</p>
-                        </div>
-                        <div class="card glass code-spec">
-                            <h3>💡 プログラマー向けの細かい工夫</h3>
-                            <div class="spec-list">
-                                <div class="spec-item">
-                                    <strong>ピクセルシェーダ内サンプリング</strong>
-                                    <span>画面中心から外側へ向かう方向ベクトルに沿ってカラーバッファテクスチャ座標を動的に多点サンプリングし平均化。</span>
+                <div class="slide-content feature-slide-wrapper" style="padding:0; height:100%;">
+                    <div class="feature-slide-card">
+                        <div class="feature-main-content">
+                            <div class="feature-header-row">
+                                <div class="feature-title-box">
+                                    <h2>プレイヤーの動きと操作感への<br>こだわり</h2>
                                 </div>
-                                <div class="spec-item">
-                                    <strong>ブラー幅のフェードイン制御</strong>
-                                    <span>ブラー幅（<code>boostBlurWidth_</code>）を0.0から0.05へ動的変化させ、CPU負荷を最小に抑えつつ強烈な加速フィールを演出。</span>
+                                <div class="feature-catchphrase-box">
+                                    <p>移動入力と連動するリアルな傾き演出で飛行時の爽快感を追求</p>
+                                </div>
+                            </div>
+                            <div class="feature-body-area">
+                                <div class="feature-text-container">
+                                    <ul class="feature-list">
+                                        <li>左右移動時に羽を傾けるロールと、上下移動時に機首を傾けるピッチの回転補正を実装。</li>
+                                        <li>入力停止時の「揺り戻し」を線形補間減衰させて滑らかに水平へ戻すことで、直感的で気持ちの良い操作感を実現。</li>
+                                    </ul>
+                                </div>
+                                <div class="feature-media-wrapper">
+                                    <video autoplay loop muted playsinline poster="../project/Resources/aiming.png">
+                                        <source src="../project/Resources/CG2 2026-07-20 11-50-50.mp4" type="video/mp4">
+                                    </video>
+                                    <div class="media-play-overlay">
+                                        <div class="play-icon-circle"></div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
+                        <div class="feature-sidebar-gradient"></div>
                     </div>
                 </div>
             </section>
+
+            <!-- Slide 6-2: 敵AIの組織飛行とステートマシンへのこだわり -->
+            <section class="slide" id="slide-6-2">
+                <div class="slide-content feature-slide-wrapper" style="padding:0; height:100%;">
+                    <div class="feature-slide-card">
+                        <div class="feature-main-content">
+                            <div class="feature-header-row">
+                                <div class="feature-title-box">
+                                    <h2>敵AIの組織飛行と<br>ステートマシンへのこだわり</h2>
+                                </div>
+                                <div class="feature-catchphrase-box">
+                                    <p>フォーメーション隊列飛行と4状態自律AIで緊迫した空中戦を実現</p>
+                                </div>
+                            </div>
+                            <div class="feature-body-area">
+                                <div class="feature-text-container">
+                                    <ul class="feature-list">
+                                        <li>4種類の隊列（V字、円形、横一列、斜め一列）を親行列参照により低計算コストで同期飛行。</li>
+                                        <li>警報とともに自機へダイブする「特攻（kDive）」とスイープ球による連続衝突判定を実装。</li>
+                                    </ul>
+                                </div>
+                                <div class="feature-media-wrapper">
+                                    <img src="C:/Users/k024g/.gemini/antigravity/brain/b28a8613-d5b3-4d3e-9744-a45b2330eca9/slide_enemy_ai_1790745377211.jpg" alt="敵AIのこだわり" style="width:100%; height:100%; object-fit:cover; border-radius:8px;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="feature-sidebar-gradient"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 6-3: GPUパーティクルとビル物理崩壊へのこだわり -->
+            <section class="slide" id="slide-6-3">
+                <div class="slide-content feature-slide-wrapper" style="padding:0; height:100%;">
+                    <div class="feature-slide-card">
+                        <div class="feature-main-content">
+                            <div class="feature-header-row">
+                                <div class="feature-title-box">
+                                    <h2>GPUパーティクルと<br>ビル物理崩壊へのこだわり</h2>
+                                </div>
+                                <div class="feature-catchphrase-box">
+                                    <p>Compute Shaderによる超並列物理演算で大量の破片飛散を表現</p>
+                                </div>
+                            </div>
+                            <div class="feature-body-area">
+                                <div class="feature-text-container">
+                                    <ul class="feature-list">
+                                        <li>D3D12 Compute Shader上で13万粒子の位置・速度・寿命を完全GPU更新（CPU負荷0ms）。</li>
+                                        <li>ビルの物理崩壊ワールド座標に同期して破片バーストを一瞬で放出する派手な破壊演出。</li>
+                                    </ul>
+                                </div>
+                                <div class="feature-media-wrapper">
+                                    <img src="C:/Users/k024g/.gemini/antigravity/brain/b28a8613-d5b3-4d3e-9744-a45b2330eca9/slide_gpu_particle_1790745419557.jpg" alt="GPUパーティクルのこだわり" style="width:100%; height:100%; object-fit:cover; border-radius:8px;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="feature-sidebar-gradient"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 6-4: 巨大蜘蛛ボスの8脚歩行制御へのこだわり -->
+            <section class="slide" id="slide-6-4">
+                <div class="slide-content feature-slide-wrapper" style="padding:0; height:100%;">
+                    <div class="feature-slide-card">
+                        <div class="feature-main-content">
+                            <div class="feature-header-row">
+                                <div class="feature-title-box">
+                                    <h2>巨大蜘蛛ボスの<br>8脚歩行制御へのこだわり</h2>
+                                </div>
+                                <div class="feature-catchphrase-box">
+                                    <p>3Dアセットに依存しない動的歩行位相差ロジックで生物的な動きを構築</p>
+                                </div>
+                            </div>
+                            <div class="feature-body-area">
+                                <div class="feature-text-container">
+                                    <ul class="feature-list">
+                                        <li>ボスの移動速度に同期した位相角計算により、移動や旋回時の「足のすべり」を完全解消。</li>
+                                        <li>HP50%以下でのフェーズ2移行と、8本の足が非同期に交互接地する不気味な関節モーションを再現。</li>
+                                    </ul>
+                                </div>
+                                <div class="feature-media-wrapper">
+                                    <img src="C:/Users/k024g/.gemini/antigravity/brain/b28a8613-d5b3-4d3e-9744-a45b2330eca9/slide_spider_boss_1790745446288.jpg" alt="巨大蜘蛛ボスのこだわり" style="width:100%; height:100%; object-fit:cover; border-radius:8px;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="feature-sidebar-gradient"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 6-5: Blender連携によるレベルデザインへのこだわり -->
+            <section class="slide" id="slide-6-5">
+                <div class="slide-content feature-slide-wrapper" style="padding:0; height:100%;">
+                    <div class="feature-slide-card">
+                        <div class="feature-main-content">
+                            <div class="feature-header-row">
+                                <div class="feature-title-box">
+                                    <h2>Blender連携による<br>レベルデザインへのこだわり</h2>
+                                </div>
+                                <div class="feature-catchphrase-box">
+                                    <p>Pythonスクリプト群による双方向データ同期で開発イテレーションを高速化</p>
+                                </div>
+                            </div>
+                            <div class="feature-body-area">
+                                <div class="feature-text-container">
+                                    <ul class="feature-list">
+                                        <li>Blenderの3Dビューポート上でルート・地形・ビル・敵配置を直感的にレイアウトしJSON出力。</li>
+                                        <li>ゲーム状態のリアルタイム俯瞰監視やリプレイ再生、スライダーでのリアルタイム調整に対応。</li>
+                                    </ul>
+                                </div>
+                                <div class="feature-media-wrapper">
+                                    <img src="C:/Users/k024g/.gemini/antigravity/brain/b28a8613-d5b3-4d3e-9744-a45b2330eca9/slide_blender_pipeline_1790745470739.jpg" alt="Blender連携のこだわり" style="width:100%; height:100%; object-fit:cover; border-radius:8px;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="feature-sidebar-gradient"></div>
+                    </div>
+                </div>
+            </section>
+
+
 
             <!-- Slide 7: 技術トピック④ Blender連携 -->
             <section class="slide" id="slide-7">

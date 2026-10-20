@@ -119,12 +119,18 @@ SoundData Audio::LoadAudio(const std::string& filename) {
 }
 
 void Audio::PlayWave(const SoundData& soundData, bool loop, float volume) {
+	if (isMuted_ || !xAudio2_ || soundData.pBuffer.empty()) {
+		return;
+	}
+
 	HRESULT result;
 
 	// ソースボイスの作成
 	IXAudio2SourceVoice* pSourceVoice = nullptr;
 	result = xAudio2_->CreateSourceVoice(&pSourceVoice, &soundData.wfex);
-	assert(SUCCEEDED(result));
+	if (FAILED(result) || !pSourceVoice) {
+		return;
+	}
 
 	// バッファの設定
 	XAUDIO2_BUFFER buffer = {};
@@ -138,13 +144,18 @@ void Audio::PlayWave(const SoundData& soundData, bool loop, float volume) {
 
 	// 波形データの送信
 	result = pSourceVoice->SubmitSourceBuffer(&buffer);
-	assert(SUCCEEDED(result));
+	if (FAILED(result)) {
+		pSourceVoice->DestroyVoice();
+		return;
+	}
 
 	// 音量設定
 	pSourceVoice->SetVolume(volume);
 
 	// 再生開始
 	result = pSourceVoice->Start();
-	assert(SUCCEEDED(result));
-
+	if (FAILED(result)) {
+		pSourceVoice->DestroyVoice();
+		return;
+	}
 }

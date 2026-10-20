@@ -92,6 +92,13 @@ public:
         D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandle,
         D3D12_GPU_DESCRIPTOR_HANDLE environmentSrvHandle);
 
+    void PrepareDraw(
+        ID3D12GraphicsCommandList* commandList,
+        D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandle,
+        D3D12_GPU_DESCRIPTOR_HANDLE environmentSrvHandle);
+
+    void DrawPrepared(ID3D12GraphicsCommandList* commandList);
+
     void DrawSkinningModel(
         ID3D12GraphicsCommandList* commandList,
         const AdvAnim::SkinCluster& skinCluster,

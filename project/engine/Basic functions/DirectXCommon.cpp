@@ -156,26 +156,39 @@ void DirectXCommon::CreateDevice() {
     HRESULT hr = CreateDXGIFactory(IID_PPV_ARGS(&dxgiFactory_));
     assert(SUCCEEDED(hr));
 
+    D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_12_2, D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0 };
+
     Microsoft::WRL::ComPtr<IDXGIAdapter4> useAdapter;
     for (UINT i = 0; dxgiFactory_->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&useAdapter)) != DXGI_ERROR_NOT_FOUND; ++i) {
         DXGI_ADAPTER_DESC3 adapterDesc{};
         hr = useAdapter->GetDesc3(&adapterDesc);
         assert(SUCCEEDED(hr));
         if (!(adapterDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
-            // ログは省略 (本来はmainのlogStreamに書き込む)
-            break;
+            for (size_t levelIndex = 0; levelIndex < _countof(featureLevels); ++levelIndex) {
+                hr = D3D12CreateDevice(useAdapter.Get(), featureLevels[levelIndex], IID_PPV_ARGS(&device_));
+                if (SUCCEEDED(hr)) {
+                    break;
+                }
+            }
+            if (device_ != nullptr) {
+                break;
+            }
         }
     }
-    assert(useAdapter != nullptr);
 
-    D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_12_2, D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0 };
-    for (size_t i = 0; i < _countof(featureLevels); ++i) {
-        hr = D3D12CreateDevice(useAdapter.Get(), featureLevels[i], IID_PPV_ARGS(&device_));
+    // ハードウェアアダプタで作成できなかった場合はWARPアダプタにフォールバック
+    if (device_ == nullptr) {
+        hr = dxgiFactory_->EnumWarpAdapter(IID_PPV_ARGS(&useAdapter));
         if (SUCCEEDED(hr)) {
-            // ログは省略 (本来はmainのlogStreamに書き込む)
-            break;
+            for (size_t levelIndex = 0; levelIndex < _countof(featureLevels); ++levelIndex) {
+                hr = D3D12CreateDevice(useAdapter.Get(), featureLevels[levelIndex], IID_PPV_ARGS(&device_));
+                if (SUCCEEDED(hr)) {
+                    break;
+                }
+            }
         }
     }
+
     assert(device_ != nullptr);
 }
 

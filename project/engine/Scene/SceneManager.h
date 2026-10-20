@@ -32,6 +32,10 @@ public:
     // 直前のシーンを完全に解放
     void ClearPreviousScene();
 
+    // ロード中かどうかを取得
+    bool IsLoading() const { return isLoading_; }
+    BaseScene* GetNextScene() const { return nextScene_.get(); }
+
 private:
     SceneManager() = default;
     SceneManager(const SceneManager&) = delete;
@@ -50,4 +54,9 @@ private:
     // 現在のシーン名と直前のシーン名
     std::string currentSceneName_;
     std::string previousSceneName_;
+
+    // 非同期ロード管理用メンバ
+    bool isLoading_ = false;
+    float loadProgress_ = 0.0f;
+    bool isLoadCompleted_ = false;
 };

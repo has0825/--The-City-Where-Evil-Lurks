@@ -77,6 +77,14 @@ public:
     bool IsTitleMode() const { return isTitleMode_; }
     void TriggerTitleTransitionBoost();
 
+    bool GetTransitionPlayerTarget(
+        Matrix4x4& outFighterWorld,
+        Matrix4x4& outViewProj,
+        Vector3& outCamPos,
+        Vector3& outCamForward,
+        Vector3& outCamUp,
+        Vector3& outFighterPos) const override;
+
     // 音声再生ラッパー
     void PlaySE(const SoundData& soundData, bool loop = false, float volume = 1.0f);
     
@@ -369,11 +377,16 @@ private:
         int cbIndexStart = -1;             // 割り振られたCBバッファの開始インデックス
         int cbCount = 0;                   // 使用するCBバッファ数 (近距離はfloors個、遠距離/ダミーは1個)
         bool isNearCourseColumn = false;   // コース中央および隣接列(±45m, ±85m)のビルフラグ(詳細描画対象)
+        float railProgress = -1.0f;        // レール上の累積進行度（オブジェクトプール管理用）
+        std::vector<Matrix4x4> cachedDetailWorldMatrices;
+        Matrix4x4 cachedIntegratedWorldMatrix = MakeIdentity4x4();
+        bool isWorldMatrixCached = false;
     };
-    static const int kMaxBuildings = 3000;
-    static const int kMaxBuildingCBs = 12000;
+    static const int kMaxBuildings = 8000;
+    static const int kMaxBuildingCBs = 30000;
     std::vector<Building> buildings_;
     std::unique_ptr<Model> buildingModel_;
+    Microsoft::WRL::ComPtr<ID3D12Resource> buildingTransformBufferResource_;
     Microsoft::WRL::ComPtr<ID3D12Resource> buildingTransformResources_[kMaxBuildingCBs];
     TransformationMatrix* buildingTransformData_[kMaxBuildingCBs] = { nullptr };
 
@@ -388,9 +401,13 @@ private:
     Vector3 floorPositions_[kNumFloors];
     Vector3 floorRotations_[kNumFloors];
     int floorLanes_[kNumFloors];
+    int floorIsJuziro_[kNumFloors] = { 0 };
     float floorProgresses_[kNumFloors];
+    Microsoft::WRL::ComPtr<ID3D12Resource> floorTransformBufferResource_;
     Microsoft::WRL::ComPtr<ID3D12Resource> floorTransformResources_[kNumFloors];
     TransformationMatrix* floorTransformData_[kNumFloors] = { nullptr };
+    std::vector<Matrix4x4> floorWorldMatrices_;
+    bool floorWorldMatricesInitialized_ = false;
 
     // 広域地面ベース (Ground Base Plane) 用
     Microsoft::WRL::ComPtr<ID3D12Resource> groundBaseTransformResource_;
@@ -489,13 +506,21 @@ private:
     // フェーズ管理用
     GamePhase currentPhase_ = GamePhase::kPhase1; // 初期値フェーズ1スタート
     float phaseTimer_ = 0.0f;
-    static constexpr float kPhaseDuration = 45.0f; // 1フェーズ45秒に延長して複数編成と戦えるようにする
+    static constexpr float kPhaseDuration = 15.0f; // 1フェーズ15秒に短縮
 
-    // フェーズ表示演出用メンバ変数
+    // フェーズ表示演出（高速ブースト＆ソニックブーム演出）用メンバ変数
+    static constexpr float kPhaseIntroDuration = 2.4f;
     std::unique_ptr<Sprite> phaseIntroSprite_;
     std::unique_ptr<Sprite> numberIntroSprite_;
+    std::unique_ptr<Sprite> phaseIntroGhostSprites_[2];
+    std::unique_ptr<Sprite> numberIntroGhostSprites_[2];
+    std::unique_ptr<Sprite> phaseIntroBandSprites_[6];
+    std::unique_ptr<Sprite> phaseIntroStreakSprites_[8];
+    std::unique_ptr<Sprite> phaseIntroGlowSprites_[2];
     float phaseIntroTimer_ = -1.0f;
     int phaseIntroNum_ = 1;
+    bool hasTriggeredPhaseImpact_ = false;
+    bool hasTriggeredPhaseExit_ = false;
     void StartPhaseIntro(int phaseNum);
 
     // ボス登場演出と画面シェイクの制御用メンバ変数
@@ -503,6 +528,16 @@ private:
     float cameraShake_ = 0.0f;
     bool isBossLanded_ = false;
     bool isBossRoared_ = false;
+    bool hasEmittedJumpStart_ = false;
+    bool hasEmittedJumpEnd_ = false;
+
+    // ボス登場WARNING演出用スプライト・タイマー
+    std::unique_ptr<Sprite> warningTextSprite_;
+    std::unique_ptr<Sprite> warningTapeTopSprite_;
+    std::unique_ptr<Sprite> warningTapeBottomSprite_;
+    std::unique_ptr<Sprite> warningFrameSprite_;
+    std::unique_ptr<Sprite> warningRedOverlaySprite_;
+    float warningScrollOffset_ = 0.0f;
 
     // 蜘蛛ボス用モデル
     std::unique_ptr<Model> bossBodyModel_;
@@ -525,29 +560,33 @@ private:
     Vector3 bossWebFireOffset_ = { 0.0f, 27.0f, 36.0f }; // 蜘蛛の糸（ビーム）発射位置のオフセット (お尻)
     
     // 左右対称な4対の足の配置パラメータ (ユーザーがImGuiで完全個別調整可能)
-    Vector3 bossLegPairPos0_ = { 1.50f, -4.15f, 5.40f };   // 前足 (ペア0)
-    float bossLegPairRotY0_ = 180.0f;
-    Vector3 bossLegPairPos1_ = { 2.00f, -4.35f, 5.80f };   // 中前足 (ペア1)
-    float bossLegPairRotY1_ = 180.0f;
-    Vector3 bossLegPairPos2_ = { 2.00f, -4.55f, -5.65f };  // 中後足 (ペア2)
-    float bossLegPairRotY2_ = 15.0f;
-    Vector3 bossLegPairPos3_ = { 1.55f, -4.45f, -5.60f };  // 後足 (ペア3)
-    float bossLegPairRotY3_ = 7.0f;
+    Vector3 bossLegPairPos0_ = { 1.80f, -3.80f, 6.20f };   // 前足 (ペア0: 外側に大きく張り出す)
+    float bossLegPairRotY0_ = 165.0f;
+    Vector3 bossLegPairPos1_ = { 2.40f, -4.00f, 4.00f };   // 中前足 (ペア1: 威圧的にアーチを描く)
+    float bossLegPairRotY1_ = 140.0f;
+    Vector3 bossLegPairPos2_ = { 2.40f, -4.20f, -4.00f };  // 中後足 (ペア2: 後方で力強く踏ん張る)
+    float bossLegPairRotY2_ = 35.0f;
+    Vector3 bossLegPairPos3_ = { 1.90f, -4.10f, -6.50f };  // 後足 (ペア3: 外側後方に突き出す)
+    float bossLegPairRotY3_ = 15.0f;
 
     // 歩行アニメーション制御用パラメータ
     float bossLegSwingSpeed_ = 5.8f;   // 歩行の速さ
-    float bossLegSwingRange_ = 0.30f;   // 前後の振れ幅
-    float bossLegLiftRange_ = 0.50f;    // 上下のステップ幅
+    float bossLegSwingRange_ = 0.35f;   // 前後の振れ幅
+    float bossLegLiftRange_ = 0.65f;    // 上下のステップ幅（より高くダイナミックに持ち上げる）
     float bossTime_ = 0.0f;            // アニメーション用タイマー
 
     // 蜘蛛ボスの足ピボット位置 (ローカル座標での根本位置)
-    // 太もも側（接続ギア）を固定軸にするため、Z軸のプラス側に変更します
-    float bossLegPivotY_ = 0.04f;
-    float bossLegPivotZ_ = 0.35f;
+    float bossLegPivotY_ = 0.08f;
+    float bossLegPivotZ_ = 0.45f;
 
     // 蜘蛛ボスの胴体の揺れパラメータ
-    float bossBodyBounceRange_ = 0.3f;  // 胴体の上下の揺れ幅(メートル)
-    float bossBodyRollRange_ = 2.0f;    // 胴体の左右のロール角(度)
+    float bossBodyBounceRange_ = 0.45f;  // 胴体の上下の重厚な揺れ幅(メートル)
+    float bossBodyRollRange_ = 3.5f;    // 胴体の左右のロール角(度)
+
+    // 地面ひび割れ＆交差点（十字路）タイル管理
+    D3D12_GPU_DESCRIPTOR_HANDLE crossroadSrvHandleGPU_ = {};
+    float bossStepCrackTimer_ = 0.0f;
+
 
     // HP・衝突判定関連のメンバ変数
     float playerHP_ = 100.0f;
@@ -572,6 +611,7 @@ private:
         kLegAttack,     // 足で殴る
         kLaserAttack,   // 糸レーザー照射
         kWebAttack,     // 蜘蛛の巣弾
+        kBuildingAttack,// なぎ倒しビル投げ
     };
     BossActionState bossActionState_ = BossActionState::kIdle;
     float bossActionTimer_ = 0.0f;
@@ -597,6 +637,22 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> webBulletInstancingResource_;
     ParticleForGPU* webBulletInstancingData_ = nullptr;
     D3D12_GPU_DESCRIPTOR_HANDLE webBulletInstancingSrvHandleGPU_{};
+
+    // なぎ倒しビル投げ攻撃の管理
+    struct ThrownBuilding {
+        Vector3 position = { 0.0f, 0.0f, 0.0f };
+        Vector3 velocity = { 0.0f, 0.0f, 0.0f };
+        Vector3 rotate = { 0.0f, 0.0f, 0.0f };
+        Vector3 rotationSpeed = { 0.0f, 0.0f, 0.0f };
+        Vector3 scale = { 10.0f, 30.0f, 10.0f };
+        float radius = 18.0f;
+        bool isAlive = false;
+        float timer = 0.0f;
+        float alpha = 1.0f;
+    };
+    ThrownBuilding bossThrownBuilding_;
+    Microsoft::WRL::ComPtr<ID3D12Resource> bossThrownBuildingTransformResource_;
+    TransformationMatrix* bossThrownBuildingTransformData_ = nullptr;
 
     // 画面蜘蛛の巣(2D)用定数バッファ
     Microsoft::WRL::ComPtr<ID3D12Resource> screenWebTransformResource_;
@@ -729,4 +785,6 @@ private:
     Vector3 CalculateRailRight(const Vector3& dir);
     Vector3 CalculateRailUp(const Vector3& dir, const Vector3& right);
     Vector3 GetBossPosition(float bodyBounce, float dropOffset = 0.0f, float yAttackOffset = 0.0f);
+    bool isBossFightInitialized_ = false; // ボス戦のビルプール初期化フラグ
+    bool hasStartedInitialPhase_ = false; // ロード画面の左右分割が完了して画面外へ出た後にPHASE 1を開始するフラグ
 };

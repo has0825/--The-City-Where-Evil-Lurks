@@ -1,7 +1,8 @@
 #include "Game.h"
 #include "SceneManager.h"
 #include "SceneFactory.h"
-#include "Input.h" // 忘れずに
+#include "Input.h"
+#include "TextureManager.h"
  
 #ifdef USE_IMGUI
 #include "externals/imgui/imgui.h"
@@ -12,6 +13,9 @@
 void Game::Initialize() {
     Framework::Initialize();
     Input::GetInstance()->Initialize(winApp_);
+
+    // TextureManagerの初期化 (全シーン・LoadingScreen共通)
+    TextureManager::GetInstance()->Initialize(dxCommon_->GetDevice(), "Resources/");
 
     sceneFactory_ = std::make_unique<SceneFactory>();
 

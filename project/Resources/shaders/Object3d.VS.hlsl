@@ -4,6 +4,7 @@ struct TransformationMatrix
 {
     float32_t4x4 WVP;
     float32_t4x4 World;
+    float32_t4 color; // モデルごとのカラー(アルファフェード等)
 };
 ConstantBuffer<TransformationMatrix> gTransformationMatrix : register(b1);
 
@@ -44,6 +45,7 @@ VertexShaderOutput main(VertexShaderInput input)
     // 法線とワールド座標の計算（環境マップに必須）
     output.normal = normalize(mul(skinnedNormal, (float32_t3x3) gTransformationMatrix.World));
     output.worldPosition = mul(skinnedPosition, gTransformationMatrix.World).xyz;
+    output.color = gTransformationMatrix.color; // モデル単位のカラーを出力
     
     return output;
 }

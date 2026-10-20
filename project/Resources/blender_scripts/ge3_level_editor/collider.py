@@ -8,9 +8,12 @@ draw_handle = None
 
 def draw_collider_callback():
     try:
-        shader = gpu.shader.from_builtin('3D_UNIFORM_COLOR')
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     except Exception:
-        return
+        try:
+            shader = gpu.shader.from_builtin('3D_UNIFORM_COLOR')
+        except Exception:
+            return
         
     shader.bind()
     shader.uniform_float("color", (0.0, 1.0, 1.0, 1.0)) # シアン色
