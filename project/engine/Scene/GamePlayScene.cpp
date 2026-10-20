@@ -7112,30 +7112,30 @@ void GamePlayScene::EmitHitEffect(const Vector3& pos) {
         }
     }
 
-    // ── ダイナミック画面演出のトリガー（近接時は約1.5〜1.8倍に強化。射撃時は強さを20%に抑えプレイしやすく調整） ──
-    float shakeMultiplier = isMelee ? 1.6f : 0.8f;
-    float hitstopMultiplier = isMelee ? 1.8f : 1.0f;
+    // ── ダイナミック画面演出（カメラ揺れ・ラジアルブラー・フラッシュ等）はデモモード時のみ発動（通常プレイでの敵被弾・撃破時は画面を揺らしたりぼかしたりしない） ──
+    if (isDemoMode_) {
+        float shakeMultiplier = isMelee ? 1.6f : 0.8f;
+        float hitstopMultiplier = isMelee ? 1.8f : 1.0f;
 
-    activeShakeIntensity_ = cameraShakeIntensity_ * (isMelee ? 1.6f : 0.20f);
-    cameraShakeTimer_ = cameraShakeTimeMax_ * shakeMultiplier;
-    hitstopTimer_ = isMelee ? (hitstopTimeMax_ * hitstopMultiplier) : 0.0f;
-    
-    // デジタルバグ（Preset 6）の砂嵐演出は無効化 (ユーザー要求により削除)
-
-    if (useRadialBlur_) {
-        blurIntensity_ = maxBlurWidth_ * (isMelee ? 1.5f : 1.0f);
-    }
-    if (useImpactFlash_) {
-        flashAlpha_ = isMelee ? 0.80f : 0.55f; // 近接はフラッシュ強め
-        if (selectedEffectPreset_ == 1) flashColor_ = {1.0f, 0.4f, 0.1f, 1.0f};
-        else if (selectedEffectPreset_ == 2) flashColor_ = {0.2f, 0.8f, 1.0f, 1.0f};
-        else if (selectedEffectPreset_ == 4) flashColor_ = {0.15f, 0.0f, 0.25f, 1.0f}; // 特異点は暗い黒紫色
-        else if (selectedEffectPreset_ == 5) flashColor_ = {0.4f, 0.75f, 1.0f, 1.0f};
-        else if (selectedEffectPreset_ == 8) flashColor_ = {1.0f, 0.95f, 0.5f, 1.0f};
-        else if (selectedEffectPreset_ == 9) flashColor_ = {0.35f, 0.0f, 0.55f, 1.0f};
-        else flashColor_ = {1.0f, 1.0f, 1.0f, 1.0f};
-    } else {
-        flashAlpha_ = 0.0f;
+        activeShakeIntensity_ = cameraShakeIntensity_ * (isMelee ? 1.6f : 0.20f);
+        cameraShakeTimer_ = cameraShakeTimeMax_ * shakeMultiplier;
+        hitstopTimer_ = isMelee ? (hitstopTimeMax_ * hitstopMultiplier) : 0.0f;
+        
+        if (useRadialBlur_) {
+            blurIntensity_ = maxBlurWidth_ * (isMelee ? 1.5f : 1.0f);
+        }
+        if (useImpactFlash_) {
+            flashAlpha_ = isMelee ? 0.80f : 0.55f; // 近接はフラッシュ強め
+            if (selectedEffectPreset_ == 1) flashColor_ = {1.0f, 0.4f, 0.1f, 1.0f};
+            else if (selectedEffectPreset_ == 2) flashColor_ = {0.2f, 0.8f, 1.0f, 1.0f};
+            else if (selectedEffectPreset_ == 4) flashColor_ = {0.15f, 0.0f, 0.25f, 1.0f}; // 特異点は暗い黒紫色
+            else if (selectedEffectPreset_ == 5) flashColor_ = {0.4f, 0.75f, 1.0f, 1.0f};
+            else if (selectedEffectPreset_ == 8) flashColor_ = {1.0f, 0.95f, 0.5f, 1.0f};
+            else if (selectedEffectPreset_ == 9) flashColor_ = {0.35f, 0.0f, 0.55f, 1.0f};
+            else flashColor_ = {1.0f, 1.0f, 1.0f, 1.0f};
+        } else {
+            flashAlpha_ = 0.0f;
+        }
     }
 }
 
