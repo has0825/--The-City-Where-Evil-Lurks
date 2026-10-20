@@ -506,7 +506,7 @@ private:
     // フェーズ管理用
     GamePhase currentPhase_ = GamePhase::kPhase1; // 初期値フェーズ1スタート
     float phaseTimer_ = 0.0f;
-    static constexpr float kPhaseDuration = 15.0f; // 1フェーズ15秒に短縮
+    static constexpr float kPhaseDuration = 2.8f; // スタート演出確認用に1フェーズ2.8秒に短縮
 
     // フェーズ表示演出（高速ブースト＆ソニックブーム演出）用メンバ変数
     static constexpr float kPhaseIntroDuration = 2.4f;
@@ -533,11 +533,15 @@ private:
 
     // ボス登場WARNING演出用スプライト・タイマー
     std::unique_ptr<Sprite> warningTextSprite_;
+    std::unique_ptr<Sprite> warningTextGhostSprites_[3];
     std::unique_ptr<Sprite> warningTapeTopSprite_;
     std::unique_ptr<Sprite> warningTapeBottomSprite_;
+    std::unique_ptr<Sprite> warningTapeTopSprites_[4];
+    std::unique_ptr<Sprite> warningTapeBottomSprites_[4];
     std::unique_ptr<Sprite> warningFrameSprite_;
     std::unique_ptr<Sprite> warningRedOverlaySprite_;
     float warningScrollOffset_ = 0.0f;
+    int warningLastBeatIndex_ = -1;
 
     // 蜘蛛ボス用モデル
     std::unique_ptr<Model> bossBodyModel_;

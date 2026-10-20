@@ -80,14 +80,16 @@ void TitleScene::Update() {
 
     if (inputDelay_ > 0) {
         inputDelay_--;
-    } else {
-        if (!isTransitioningToGame_ && input_->IsKeyTriggered(DIK_SPACE)) {
+    } else if (!isTransitioningToGame_) {
+        transitionTimer_ += 1.0f / 60.0f;
+        // スタート演出ブランチ：一定時間（1.5秒）経過またはSPACE押下で自動的にロード画面へ進行
+        if (input_->IsKeyTriggered(DIK_SPACE) || transitionTimer_ >= 1.5f) {
             isTransitioningToGame_ = true;
             transitionTimer_ = 0.0f;
             if (gameplayScene_) {
                 gameplayScene_->TriggerTitleTransitionBoost();
             }
-            // SPACE押下と同時に斜め斬撃＆上下分割による画面遷移を即座に開始
+            // 斜め斬撃＆上下分割による画面遷移を即座に開始
             SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
         }
     }

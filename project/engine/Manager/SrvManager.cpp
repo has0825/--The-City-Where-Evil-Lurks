@@ -1,7 +1,7 @@
 #include "SrvManager.h"
 #include <D3D12Util.h>
 
-const uint32_t SrvManager::kMaxSRVCount = 2048;
+const uint32_t SrvManager::kMaxSRVCount = 65536;
 
 SrvManager* SrvManager::GetInstance() {
     static SrvManager instance;
