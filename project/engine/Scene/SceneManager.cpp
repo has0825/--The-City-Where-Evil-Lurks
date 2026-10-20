@@ -16,7 +16,10 @@ SceneManager::~SceneManager() {
 
 void SceneManager::ChangeScene(const std::string& sceneName) {
     assert(sceneFactory_);
-    assert(nextScene_ == nullptr);
+    // すでにシーン遷移予約中またはロード演出中の場合は重複呼び出しを無視する
+    if (isLoading_ || nextScene_) {
+        return;
+    }
 
     previousSceneName_ = currentSceneName_;
     currentSceneName_ = sceneName;
@@ -32,6 +35,14 @@ void SceneManager::ChangeScene(const std::string& sceneName) {
         return;
     }
 
+    // ゲーム本編（GAMEPLAY）以外（GAMEOVER / CLEAR / TITLE）への遷移はロード画面演出を挟まず次フレームで即座に切り替える
+    if (sceneName != "GAMEPLAY") {
+        nextScene_ = sceneFactory_->CreateScene(currentSceneName_);
+        isLoading_ = false;
+        isLoadCompleted_ = false;
+        return;
+    }
+
     // ロード画面演出の開始
     isLoading_ = true;
     loadProgress_ = 0.05f;
@@ -42,6 +53,20 @@ void SceneManager::ChangeScene(const std::string& sceneName) {
 }
 
 void SceneManager::Update() {
+    // ロード画面を介さない即時シーン切り替え処理（GAMEOVER / CLEAR / TITLE）
+    if (!isLoading_ && nextScene_) {
+        ClearPreviousScene();
+        if (currentScene_) {
+            previousScene_ = std::move(currentScene_);
+        }
+        currentScene_ = std::move(nextScene_);
+        if (currentScene_) {
+            currentScene_->Initialize();
+            currentScene_->Update();
+        }
+        return;
+    }
+
     if (isLoading_) {
         LoadingScreen* loading = LoadingScreen::GetInstance();
 

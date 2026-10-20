@@ -508,11 +508,19 @@ private:
     float phaseTimer_ = 0.0f;
     static constexpr float kPhaseDuration = 15.0f; // 1フェーズ15秒に短縮
 
-    // フェーズ表示演出用メンバ変数
+    // フェーズ表示演出（高速ブースト＆ソニックブーム演出）用メンバ変数
+    static constexpr float kPhaseIntroDuration = 2.4f;
     std::unique_ptr<Sprite> phaseIntroSprite_;
     std::unique_ptr<Sprite> numberIntroSprite_;
+    std::unique_ptr<Sprite> phaseIntroGhostSprites_[2];
+    std::unique_ptr<Sprite> numberIntroGhostSprites_[2];
+    std::unique_ptr<Sprite> phaseIntroBandSprites_[6];
+    std::unique_ptr<Sprite> phaseIntroStreakSprites_[8];
+    std::unique_ptr<Sprite> phaseIntroGlowSprites_[2];
     float phaseIntroTimer_ = -1.0f;
     int phaseIntroNum_ = 1;
+    bool hasTriggeredPhaseImpact_ = false;
+    bool hasTriggeredPhaseExit_ = false;
     void StartPhaseIntro(int phaseNum);
 
     // ボス登場演出と画面シェイクの制御用メンバ変数

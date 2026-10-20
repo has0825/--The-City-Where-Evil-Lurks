@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UMLクラス図 & 設計フロー図 プレビュー & PNG保存ツール</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --text-main: #0f172a;
+            --text-sub: #475569;
+            --border: #e2e8f0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "BIZ UDPGothic", Meiryo, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 24px;
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 16px;
+        }
+
+        h1 {
+            font-size: 24px;
+            margin: 0 0 8px 0;
+            color: #1e293b;
+        }
+
+        p.desc {
+            margin: 0;
+            color: var(--text-sub);
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .badge-list {
+            margin-top: 10px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            background-color: #e0e7ff;
+            color: #3730a3;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 9999px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+            overflow-x: auto;
+        }
+
+        .tab-btn {
+            background: none;
+            border: 1px solid transparent;
+            padding: 10px 18px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-sub);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .tab-btn:hover {
+            background-color: #f1f5f9;
+            color: var(--text-main);
+        }
+
+        .tab-btn.active {
+            background-color: var(--primary);
+            color: #ffffff;
+            box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            padding: 24px;
+            display: none;
+        }
+
+        .card.active {
+            display: block;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background-color: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--primary-hover);
+        }
+
+        .btn-secondary {
+            background-color: #e2e8f0;
+            color: #334155;
+        }
+
+        .btn-secondary:hover {
+            background-color: #cbd5e1;
+        }
+
+        .diagram-viewport {
+            background-color: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 30px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 400px;
+            overflow: auto;
+        }
+
+        .info-box {
+            margin-top: 20px;
+            padding: 16px;
+            background-color: #f8fafc;
+            border-left: 4px solid var(--primary);
+            border-radius: 4px;
+            font-size: 13px;
+            line-height: 1.7;
+        }
+
+        .info-box h4 {
+            margin: 0 0 6px 0;
+            font-size: 14px;
+            color: #1e293b;
+        }
+
+        pre.mermaid-code {
+            background-color: #1e293b;
+            color: #f8fafc;
+            padding: 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            overflow-x: auto;
+            margin-top: 12px;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>UMLクラス図 & 設計フロー図 プレビュー・提出用画像出力ツール</h1>
+        <p class="desc">
+            就職作品（3Dルート固定シューティング & Blender Sync）の設計図です。
+            提出課題の条件（<strong>継承、コンポジション、集約、依存</strong>記号の網羅、デザインパターン適用）に完全準拠しています。
+            各タブから図を確認し、右上の「PNG画像としてダウンロード」ボタンを押すだけで提出用画像（.png）を取得できます。
+        </p>
+        <div class="badge-list">
+            <span class="badge">提出形式: .png / .jpg / .pdf 対応</span>
+            <span class="badge">継承記号: &lt;|--</span>
+            <span class="badge">コンポジション記号: *--</span>
+            <span class="badge">集約記号: o--</span>
+            <span class="badge">依存記号: ..&gt;</span>
+        </div>
+    </header>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab(0)">【提出推奨】エネミーAI設計 (State & ポリモーフィズム)</button>
+        <button class="tab-btn" onclick="switchTab(1)">【提出用】シーン管理 (Abstract Factory & DI)</button>
+        <button class="tab-btn" onclick="switchTab(2)">【設計フロー図】エネミー行動制御 (添付画像スタイル)</button>
+        <button class="tab-btn" onclick="switchTab(3)">【参考】買い物フロー図 (添付画像日本語化)</button>
+    </div>
+
+    <!-- TAB 1: エネミーAIクラス図 -->
+    <div class="card active" id="tab-0">
+        <div class="card-header">
+            <div>
+                <h2 class="card-title">エネミー行動制御のUMLクラス図 (State Pattern & ポリモーフィズム)</h2>
+                <span style="font-size: 12px; color: #64748b;">※学校の提出要件（継承・コンポジション・依存の専用記号）を網羅した本命のクラス図です</span>
+            </div>
+            <div class="actions">
+                <button class="btn btn-secondary" onclick="copyMermaidCode('code-enemy')">Mermaidコードをコピー</button>
+                <button class="btn btn-primary" onclick="downloadPNG('diagram-enemy', 'Enemy_State_UML_ClassDiagram.png')">📷 PNG画像としてダウンロード</button>
+            </div>
+        </div>
+        <div class="diagram-viewport" id="diagram-enemy">
+            <pre class="mermaid" id="code-enemy">
+classDiagram
+    direction TB
+
+    class GameObject {
+        #Vector3 position_
+        #Vector3 rotation_
+        #Vector3 scale_
+        +Initialize()*
+        +Update(deltaTime)*
+        +Draw()*
+    }
+
+    class BoxCollider {
+        +bool hasCollider
+        +Vector3 center
+        +Vector3 size
+    }
+
+    class Enemy {
+        -float hp_
+        -float radius_
+        -BoxCollider collider_
+        -unique_ptr~IEnemyState~ currentState_
+        +Initialize(position, hp, radius)
+        +OnUpdate(deltaTime)
+        +ChangeState(newState)
+        +TakeDamage(damage)
+    }
+
+    class IEnemyState {
+        <<interface>>
+        +Enter(enemy)*
+        +Update(enemy, deltaTime)*
+        +Exit(enemy)*
+    }
+
+    class EnemyStateSideWait {
+        +Enter(enemy)
+        +Update(enemy, deltaTime)
+    }
+
+    class EnemyStateAppear {
+        +Enter(enemy)
+        +Update(enemy, deltaTime)
+    }
+
+    class EnemyStateWander {
+        +Enter(enemy)
+        +Update(enemy, deltaTime)
+    }
+
+    class EnemyStateDive {
+        +Enter(enemy)
+        +Update(enemy, deltaTime)
+    }
+
+    class EnemyFactory {
+        +CreateEnemy(position, hp, radius)$ Enemy
+    }
+
+    %% 継承関係 (三角形矢印: extends)
+    GameObject <|-- Enemy : 継承 (extends)
+    IEnemyState <|-- EnemyStateSideWait : 実装 (implements)
+    IEnemyState <|-- EnemyStateAppear : 実装 (implements)
+    IEnemyState <|-- EnemyStateWander : 実装 (implements)
+    IEnemyState <|-- EnemyStateDive : 実装 (implements)
+
+    %% コンポジション (黒い塗りつぶし菱形: 強い所有 / 値メンバ・unique_ptr)
+    Enemy *-- BoxCollider : コンポジション (値所有)
+    Enemy *-- IEnemyState : コンポジション (排他所有)
+
+    %% 依存関係 (破線矢印: 引数による一時参照 / Factoryによる生成)
+    IEnemyState ..> Enemy : 引数で一時参照 (depends)
+    EnemyFactory ..> Enemy : 生成して返却 (creates)
+            </pre>
+        </div>
+        <div class="info-box">
+            <h4>記号と設計の対応解説</h4>
+            <ul>
+                <li><strong>継承（<code>&lt;|--</code>）</strong>: <code>GameObject</code> を継承して <code>Enemy</code> が派生。また <code>IEnemyState</code> を継承して各行動状態（<code>SideWait</code>, <code>Appear</code>, <code>Wander</code>, <code>Dive</code>）をポリモーフィズムで定義。</li>
+                <li><strong>コンポジション（<code>*--</code>）</strong>: <code>Enemy</code> はコリジョン <code>BoxCollider</code> を値型で持ち、状態インスタンス <code>currentState_</code> を <code>std::unique_ptr</code> で強く所有。</li>
+                <li><strong>依存（<code>..&gt;</code>）</strong>: <code>IEnemyState::Update</code> が引数として <code>Enemy*</code> を受け取る一時的な参照、および <code>EnemyFactory</code> が <code>Enemy</code> を生成して返す関係。</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- TAB 2: シーン管理クラス図 -->
+    <div class="card" id="tab-1">
+        <div class="card-header">
+            <div>
+                <h2 class="card-title">シーン管理のUMLクラス図 (Abstract Factory & 集約・コンポジション)</h2>
+                <span style="font-size: 12px; color: #64748b;">※集約（白菱形）とコンポジション（黒菱形）の両方の使い分けを明確にアピールできるクラス図です</span>
+            </div>
+            <div class="actions">
+                <button class="btn btn-secondary" onclick="copyMermaidCode('code-scene')">Mermaidコードをコピー</button>
+                <button class="btn btn-primary" onclick="downloadPNG('diagram-scene', 'SceneManager_Factory_UML_ClassDiagram.png')">📷 PNG画像としてダウンロード</button>
+            </div>
+        </div>
+        <div class="diagram-viewport" id="diagram-scene">
+            <pre class="mermaid" id="code-scene">
+classDiagram
+    direction TB
+
+    class AbstractSceneFactory {
+        <<abstract>>
+        +CreateScene(sceneName)* unique_ptr~BaseScene~
+    }
+
+    class SceneFactory {
+        +CreateScene(sceneName) unique_ptr~BaseScene~
+    }
+
+    class BaseScene {
+        <<abstract>>
+        +Initialize()*
+        +Finalize()*
+        +Update()*
+        +Draw()*
+    }
+
+    class TitleScene {
+        +Initialize()
+        +Update()
+        +Draw()
+    }
+
+    class GamePlayScene {
+        +Initialize()
+        +Update()
+        +Draw()
+    }
+
+    class ClearScene {
+        +Initialize()
+        +Update()
+        +Draw()
+    }
+
+    class GameOverScene {
+        +Initialize()
+        +Update()
+        +Draw()
+    }
+
+    class SceneManager {
+        -unique_ptr~BaseScene~ currentScene_
+        -AbstractSceneFactory* sceneFactory_
+        +GetInstance()$ SceneManager*
+        +ChangeScene(sceneName)
+        +SetFactory(factory)
+        +Update()
+        +Draw()
+    }
+
+    %% 継承関係
+    AbstractSceneFactory <|-- SceneFactory : 継承 (extends)
+    BaseScene <|-- TitleScene : 継承 (extends)
+    BaseScene <|-- GamePlayScene : 継承 (extends)
+    BaseScene <|-- ClearScene : 継承 (extends)
+    BaseScene <|-- GameOverScene : 継承 (extends)
+
+    %% コンポジション (黒い菱形: 強い所有)
+    SceneManager *-- BaseScene : コンポジション (unique_ptr所有)
+
+    %% 集約 (白い菱形: 弱い所有 / 外部ポインタ注入)
+    SceneManager o-- AbstractSceneFactory : 集約 (ポインタ参照)
+
+    %% 依存関係
+    SceneFactory ..> BaseScene : 生成 (creates)
+            </pre>
+        </div>
+        <div class="info-box">
+            <h4>集約とコンポジションの使い分け</h4>
+            <ul>
+                <li><strong>集約（<code>o--</code>）</strong>: <code>SceneManager</code> は工場 <code>AbstractSceneFactory</code> の所有権を持たず、ポインタを外部から受け取って参照しているだけ（寿命が連動しない）のため「集約」です。</li>
+                <li><strong>コンポジション（<code>*--</code>）</strong>: シーン実体 <code>currentScene_</code> は <code>SceneManager</code> が <code>unique_ptr</code> で寿命を一元管理するため「コンポジション」です。</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- TAB 3: フロー図 (添付画像スタイル) -->
+    <div class="card" id="tab-2">
+        <div class="card-header">
+            <div>
+                <h2 class="card-title">エネミー行動制御AI 状態遷移フロー図 (添付画像スタイル)</h2>
+                <span style="font-size: 12px; color: #64748b;">※ご提示いただいた画像と同じ配置・構成で、日本語にて作成したフロー図です</span>
+            </div>
+            <div class="actions">
+                <button class="btn btn-secondary" onclick="copyMermaidCode('code-flow')">Mermaidコードをコピー</button>
+                <button class="btn btn-primary" onclick="downloadPNG('diagram-flow', 'Enemy_State_Flowchart.png')">📷 PNG画像としてダウンロード</button>
+            </div>
+        </div>
+        <div class="diagram-viewport" id="diagram-flow">
+            <pre class="mermaid" id="code-flow">
+flowchart TD
+    Start[" "] -->|エネミー生成・配置| Init["エネミー初期化"]
+    Init --> StateCheck{"現在の行動状態を判定"}
+    
+    StateCheck -->|待機フェーズ| SideWait["画面外待機 (SideWait)<br/>編隊合流タイミングを監視"]
+    StateCheck -->|出現フェーズ| Appear["画面内合流 (Appear)<br/>イージング曲線で隊列へ進入"]
+    StateCheck -->|交戦フェーズ| Wander["回遊・射撃 (Wander)<br/>サイン波で浮遊しつつ弾発射"]
+    StateCheck -->|突撃フェーズ| Dive["急降下特攻 (Dive)<br/>自機座標へ向けて高速突撃"]
+
+    classDef default fill:#ffffff,stroke:#232742,stroke-width:2px,color:#1a1d2e;
+    classDef decision fill:#ffffff,stroke:#232742,stroke-width:2px,color:#1a1d2e;
+    classDef stateNode fill:#fcfcff,stroke:#2d3748,stroke-width:2px,color:#1a202c;
+    class Init,SideWait,Appear,Wander,Dive stateNode;
+    class StateCheck decision;
+            </pre>
+        </div>
+    </div>
+
+    <!-- TAB 4: 買い物フロー図 (添付画像の日本語化) -->
+    <div class="card" id="tab-3">
+        <div class="card-header">
+            <div>
+                <h2 class="card-title">添付画像の日本語化フロー図 (参考)</h2>
+                <span style="font-size: 12px; color: #64748b;">※ご提示いただいた画像そのものの日本語版です</span>
+            </div>
+            <div class="actions">
+                <button class="btn btn-secondary" onclick="copyMermaidCode('code-sample')">Mermaidコードをコピー</button>
+                <button class="btn btn-primary" onclick="downloadPNG('diagram-sample', 'Shopping_Flowchart_JP.png')">📷 PNG画像としてダウンロード</button>
+            </div>
+        </div>
+        <div class="diagram-viewport" id="diagram-sample">
+            <pre class="mermaid" id="code-sample">
+flowchart TD
+    Start[" "] -->|お金を手に入れる| Shopping["買い物に行く"]
+    Shopping --> Decision{"何を買うか考える"}
+    Decision -->|候補 1| Laptop["ノートPC"]
+    Decision -->|候補 2| iPhone["スマートフォン (iPhone)"]
+    Decision -->|候補 3| Car["🚗 自動車"]
+
+    classDef default fill:#ffffff,stroke:#1e1e38,stroke-width:2px,color:#1e1e38;
+    classDef highlight fill:#f0f4ff,stroke:#3b5998,stroke-width:2px,color:#1e1e38;
+    class Shopping,Decision highlight;
+            </pre>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        flowchart: {
+            useMaxWidth: false,
+            htmlLabels: true,
+            curve: 'basis'
+        },
+        classDiagram: {
+            useMaxWidth: false
+        }
+    });
+
+    function switchTab(index) {
+        const tabs = document.querySelectorAll('.tab-btn');
+        const cards = document.querySelectorAll('.card');
+        tabs.forEach((tab, i) => {
+            tab.classList.toggle('active', i === index);
+        });
+        cards.forEach((card, i) => {
+            card.classList.toggle('active', i === index);
+        });
+    }
+
+    function copyMermaidCode(preId) {
+        const elem = document.getElementById(preId);
+        if (!elem) return;
+        const text = elem.innerText.trim();
+        navigator.clipboard.writeText(text).then(() => {
+            alert('Mermaidコードをクリップボードにコピーしました！\nMermaid Live Editorにそのまま貼り付けて利用できます。');
+        });
+    }
+
+    function downloadPNG(viewportId, filename) {
+        const viewport = document.getElementById(viewportId);
+        const svg = viewport.querySelector('svg');
+        if (!svg) {
+            alert('SVG要素の取得に失敗しました。');
+            return;
+        }
+
+        // SVGをシリアライズ
+        const serializer = new XMLSerializer();
+        let svgString = serializer.serializeToString(svg);
+
+        // スタイルとフォント調整
+        if (!svgString.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)) {
+            svgString = svgString.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+        }
+
+        const bbox = svg.getBoundingClientRect();
+        const scale = 2; // 高解像度出力 (Retina / 提出用高画質)
+        const width = (bbox.width || 800) * scale;
+        const height = (bbox.height || 600) * scale;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+
+        // 白背景を塗りつぶし
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+
+        const img = new Image();
+        const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+
+        img.onload = function() {
+            ctx.drawImage(img, 0, 0, width, height);
+            URL.revokeObjectURL(url);
+
+            const pngUrl = canvas.toDataURL('image/png');
+            const downloadLink = document.createElement('a');
+            downloadLink.href = pngUrl;
+            downloadLink.download = filename;
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+        };
+        img.src = url;
+    }
+</script>
+
+</body>
+</html>

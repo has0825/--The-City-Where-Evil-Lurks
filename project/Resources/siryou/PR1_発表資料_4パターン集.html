@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>マルオカ先輩スタイル完全再現！PR1 スライド見本＆撮影ガイド</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Meiryo", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+    background: #1c1c1c;
+    color: #fff;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #111;
+    border-bottom: 2px solid #0099ff;
+    padding: 12px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .header-title {
+    font-size: 18px;
+    font-weight: bold;
+    color: #fff;
+  }
+  . container-wrap {
+    max-width: 1200px;
+    margin: 24px auto;
+    padding: 0 20px 80px;
+  }
+
+  /* マルオカ先輩のスライド（ダークグレー背景 #3b3b3b + 水色ライン #0099ff）完全再現 */
+  .maruoka-slide {
+    background: #3b3b3b;
+    color: #ffffff;
+    aspect-ratio: 16 / 9;
+    padding: 32px 48px 24px;
+    margin-bottom: 36px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+  }
+  .maruoka-slide.cover {
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+  .maruoka-slide.cover h1 {
+    font-size: 40px;
+    margin: 0 0 28px;
+    font-weight: bold;
+    line-height: 1.4;
+  }
+  .maruoka-slide.cover .author {
+    font-size: 28px;
+    font-weight: bold;
+  }
+  .slide-top {
+    border-bottom: 2px solid #0099ff;
+    padding-bottom: 8px;
+    margin-bottom: 18px;
+  }
+  .slide-top h2 {
+    margin: 0;
+    font-size: 32px;
+    font-weight: bold;
+  }
+  .slide-middle {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .slide-bottom-line {
+    border-top: 2px solid #0099ff;
+    margin-top: 14px;
+  }
+  /* 画像・動画を入れる場所のガイド枠 */
+  .media-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    flex: 1;
+    min-height: 240px;
+  }
+  .media-grid-1 {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex: 1;
+    min-height: 230px;
+  }
+  .media-split-lr {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 24px;
+    flex: 1;
+    align-items: center;
+  }
+  .shoot-box {
+    background: rgba(0, 153, 255, 0.1);
+    border: 3px dashed #38bdf8;
+    border-radius: 10px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    width: 100%;
+    height: 100%;
+  }
+  .shoot-badge {
+    background: #0284c7;
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 99px;
+    font-size: 14px;
+    font-weight: bold;
+    margin-bottom: 10px;
+  }
+  .shoot-title {
+    font-size: 20px;
+    font-weight: bold;
+    color: #e0f2fe;
+    margin-bottom: 8px;
+  }
+  .shoot-desc {
+    font-size: 15px;
+    color: #bae6fd;
+    line-height: 1.5;
+  }
+  /* スライド内のシンプル文字 */
+  .short-text {
+    font-size: 22px;
+    font-weight: bold;
+    line-height: 1.6;
+  }
+  .short-text.center {
+    text-align: center;
+  }
+  .red-text {
+    color: #ff6347;
+  }
+  .big-conclusion {
+    font-size: 32px;
+    font-weight: bold;
+    margin-top: 6px;
+  }
+  /* マルオカ先輩のスライド5（Miro風の黄色い実装概要カード）完全再現！そのままスクショ可能 */
+  .miro-board {
+    background: #f2f2f2;
+    border-radius: 8px;
+    padding: 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 20px;
+    color: #222;
+  }
+  .miro-card {
+    background: #fff9b1;
+    border: 2px solid #eab308;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+  }
+  .miro-card-title {
+    font-weight: bold;
+    font-size: 18px;
+    border-bottom: 2px solid #eab308;
+    padding-bottom: 6px;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+  .miro-subbox {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-title">🎬 マルオカ先輩スタイル完全再現！『十字路と背景ビルの追加による街並みの現実感向上と軽量化』</div>
+</header>
+
+<div class="container-wrap">
+  <p>※水色の点線枠（📸マーク）の場所に、指示通りのスクショや動画を撮って貼るだけで完成します！「5. 実装概要」の黄色いカード3枚は<strong>Win + Shift + S でそのままスクショしてGoogleスライドに貼れます！</strong></p>
+
+  <!-- 表紙 -->
+  <div class="maruoka-slide cover">
+    <h1>十字路と背景ビルの追加による<br>街並みの現実感向上と軽量化</h1>
+    <div class="author">LE3B_14_シミズグチ_ハル</div>
+  </div>
+
+  <!-- 1. 参考作品 -->
+  <div class="maruoka-slide">
+    <div class="slide-top"><h2>1. 参考作品</h2></div>
+    <div class="slide-middle">
+      <div class="media-grid-2">
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 動画 または スクショ ①</span>
+          <div class="shoot-title">前回のゲーム画面（一本道を飛んでいる画面）</div>
+          <div class="shoot-desc">これまでの曲がり道がある一本道コースを飛んでいる画面を貼る</div>
+        </div>
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 画像 ②</span>
+          <div class="shoot-title">参考にした商業ゲームの画像（1〜2枚）</div>
+          <div class="shoot-desc">『スターフォックス』『エースコンバット』など都会のビル街を飛ぶゲームの画像</div>
+        </div>
+      </div>
+      <div class="short-text">
+        前回は曲がり道を追加し、コースに変化をつけられるようになった
+      </div>
+    </div>
+    <div class="slide-bottom-line"></div>
+  </div>
+
+  <!-- 2. 実装背景 -->
+  <div class="maruoka-slide">
+    <div class="slide-top"><h2>2. 実装背景</h2></div>
+    <div class="slide-middle">
+      <div class="media-grid-2">
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 スクショ ①</span>
+          <div class="shoot-title">今までの「一本道」でルートがすぐ分かる画面</div>
+          <div class="shoot-desc">道が1本しかなく、次にどっちへ曲がるかすぐ分かってしまう頃のスクショ</div>
+        </div>
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 スクショ ②</span>
+          <div class="shoot-title">今回目指した「十字路があり奥にも道が続く画面」</div>
+          <div class="shoot-desc">十字路（横断歩道）があり、真っすぐにも横にも道とビルが続いているスクショ</div>
+        </div>
+      </div>
+      <div class="short-text">
+        <div class="red-text">今までは一本道だったため、次にどのルートへ進むのかが最初から分かってしまっていた</div>
+        <div>➔ 「次に曲がるのか、そのまま真っすぐ進むのか」分からない現実感を出したい</div>
+        <div>➔ 分かれ道（十字路）と、その奥に続く街並みを作る必要がある</div>
+        <div class="big-conclusion">十字路と背景ビルの実装へ</div>
+      </div>
+    </div>
+    <div class="slide-bottom-line"></div>
+  </div>
+
+  <!-- 3. 課題 -->
+  <div class="maruoka-slide">
+    <div class="slide-top"><h2>3. 課題</h2></div>
+    <div class="slide-middle">
+      <div class="media-grid-1">
+        <div class="shoot-box" style="max-width: 78%;">
+          <span class="shoot-badge">📸 スクショ または 動画（1枚）</span>
+          <div class="shoot-title">十字路や背景ビルをたくさん配置したときの画面</div>
+          <div class="shoot-desc">十字路の周りや奥にビルがたくさん並んでいるスクショ（または道路タイルが重なっていた場所のスクショ）</div>
+        </div>
+      </div>
+      <div class="short-text">
+        <div>・ただ十字路を置くだけでは、進まない方の奥が空いていてルートがバレてしまう</div>
+        <div>・縦と横の道路タイルが重なる部分で、画面がチカチカしてしまう</div>
+        <div>・進まない道の奥までビルを大量に置くと、処理が重くなりラグが発生する</div>
+      </div>
+    </div>
+    <div class="slide-bottom-line"></div>
+  </div>
+
+  <!-- 4. 解決方法の選定 -->
+  <div class="maruoka-slide">
+    <div class="slide-top"><h2>4. 解決方法の選定</h2></div>
+    <div class="slide-middle">
+      <div class="media-grid-2">
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 スクショ ①</span>
+          <div class="shoot-title">曲がり角の「真っすぐ奥」にも続く道とビル</div>
+          <div class="shoot-desc">実際には曲がる交差点でも、正面の奥にダミーの道とビルが並んでいるスクショ</div>
+        </div>
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 スクショ ②</span>
+          <div class="shoot-title">コース横の近いビル と 遠くの背景ビル</div>
+          <div class="shoot-desc">手前のはっきり見えるビルと、奥の背景ビルが両方映っているスクショ</div>
+        </div>
+      </div>
+      <div class="short-text">
+        <div>・十字路の先（進まない直進方向や横道）にもダミーの道とビルを並べてルートを隠す</div>
+        <div>・遠くの背景ビルまで1階ずつ細かく描画する必要はない</div>
+        <div class="red-text">➔ 十字路で分かれ道を作りつつ、はっきり映らない背景ビルは荒くして軽量化することにした</div>
+      </div>
+    </div>
+    <div class="slide-bottom-line"></div>
+  </div>
+
+  <!-- 5. 実装概要（マルオカ先輩のMiroカード風！ここはこのままスクショして貼れます） -->
+  <div class="maruoka-slide">
+    <div class="slide-top"><h2>5. 実装概要</h2></div>
+    <div class="slide-middle">
+      <div class="miro-board">
+        <div class="miro-card">
+          <div class="miro-card-title">十字路と分かれ道の作成</div>
+          <div class="miro-subbox">300mおきに十字路を配置</div>
+          <div class="miro-subbox">左右に伸びる横道を追加</div>
+          <div class="miro-subbox">直進方向にもダミーの道とビルを延長</div>
+        </div>
+        <div class="miro-card">
+          <div class="miro-card-title">道路の重なり・チラつき修正</div>
+          <div class="miro-subbox">十字路と縦横の道を隙間なく接続</div>
+          <div class="miro-subbox">近すぎる重複タイルを非表示</div>
+          <div class="miro-subbox">高さをわずかにずらしチラつき防止</div>
+        </div>
+        <div class="miro-card">
+          <div class="miro-card-title">背景ビルの軽量化</div>
+          <div class="miro-subbox">カメラからの距離を計算</div>
+          <div class="miro-subbox">コース横のビル：1階ずつ細かく描画</div>
+          <div class="miro-subbox">奥の背景ビル：1つにまとめて軽量化</div>
+        </div>
+      </div>
+      <div class="short-text">
+        <div>1. コースに沿って300mおきに十字路と横道を配置</div>
+        <div>2. 曲がり角の直進方向にもダミーの道とビルを伸ばし、進むルートを予測しにくくする</div>
+        <div>3. 十字路と通常道路が重ならないよう位置を合わせ、チラつきを解消</div>
+        <div>4. はっきり映らない奥の背景ビルは1つにまとめて描画し、ラグを軽減</div>
+      </div>
+    </div>
+    <div class="slide-bottom-line"></div>
+  </div>
+
+  <!-- 6. 実装 -->
+  <div class="maruoka-slide">
+    <div class="slide-top"><h2>6. 実装</h2></div>
+    <div class="slide-middle">
+      <div class="media-grid-2">
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 スクショ ①</span>
+          <div class="shoot-title">十字路（横断歩道）と縦横の道が繋がっている画面</div>
+          <div class="shoot-desc">十字路タイル（juziro.jpg）と周りの道路・ビルが綺麗に繋がっているスクショ</div>
+        </div>
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 動画 または スクショ ②</span>
+          <div class="shoot-title">交差点の手前で「直進か曲がるか分からない」画面</div>
+          <div class="shoot-desc">交差点に向かって飛んでいて、正面にも横にも道とビルが続いている動画・スクショ</div>
+        </div>
+      </div>
+      <div class="short-text">
+        <div>十字路と奥へ続くビル街を追加し、次の一手が分からない現実感のある街並みにした</div>
+        <div>また、道路の重なり修正と背景ビルの簡略化により、チラつきやラグも解消できた</div>
+      </div>
+    </div>
+    <div class="slide-bottom-line"></div>
+  </div>
+
+  <!-- 7. 追加前後の比較 -->
+  <div class="maruoka-slide">
+    <div class="slide-top"><h2>7. 追加前後の比較</h2></div>
+    <div class="slide-middle">
+      <div class="media-grid-2">
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 動画 または スクショ ①</span>
+          <div class="shoot-title">前回のゲーム画面（追加前）</div>
+          <div class="shoot-desc">一本道で進む方向がすぐ分かり、奥が空いていた頃の動画・スクショ</div>
+        </div>
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 動画 ②（一番の見せ場！）</span>
+          <div class="shoot-title">今回のゲーム画面（追加後）</div>
+          <div class="shoot-desc">十字路のあるビル街を飛び、角をスムーズに曲がっていくプレイ動画</div>
+        </div>
+      </div>
+      <div class="short-text center">
+        一本道から十字路のある街並みに進化したことで、ルートが読めない臨場感と現実感が出た
+      </div>
+    </div>
+    <div class="slide-bottom-line"></div>
+  </div>
+
+  <!-- 8. 今後の応用と展望 -->
+  <div class="maruoka-slide">
+    <div class="slide-top"><h2>8. 今後の応用と展望</h2></div>
+    <div class="slide-middle">
+      <div class="media-split-lr">
+        <div class="short-text">
+          <p>・十字路とタイルの道路の横幅が一部合っていない<br>　➔ 道幅を調整してさらに自然につなげる</p>
+          <p>・実際に別ルートへ分岐する仕組み<br>　➔ 見た目だけでなく、ルート分岐も試したい</p>
+          <p>・背景ビルの見た目強化<br>　➔ 重くならない範囲で夜景の表現などを追加したい</p>
+        </div>
+        <div class="shoot-box">
+          <span class="shoot-badge">📸 スクショ ①</span>
+          <div class="shoot-title">十字路と横道の境目部分のスクショ</div>
+          <div class="shoot-desc">今後横幅をぴったり合わせたい十字路周りのスクショを右側に1枚貼る</div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-bottom-line"></div>
+  </div>
+
+</div>
+
+</body>
+</html>
