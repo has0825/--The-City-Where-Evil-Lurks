@@ -2914,27 +2914,27 @@ void GamePlayScene::Update() {
                     Vector3 cameraTarget = { 0,0,0 };
 
                 if (currentAngleIndex == 0) {
-                    // アングル1: 右斜め後ろの低い位置から見上げる
-                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailRight, 20.0f), Add(Scale(playerRailDir, -35.0f), Scale(playerRailUp, 8.0f))));
-                    cameraTarget = Add(fighterWorldPos, Scale(playerRailUp, 2.0f));
+                    // アングル1: 右斜め後ろの近い低い位置から見上げる（自機を画面中央〜やや下に大きく映す）
+                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailRight, 15.0f), Add(Scale(playerRailDir, -26.0f), Scale(playerRailUp, 9.5f))));
+                    cameraTarget = Add(fighterWorldPos, Scale(playerRailUp, 5.2f));
                 }
                 else if (currentAngleIndex == 1) {
-                    // アングル2: 正面クローズアップ（前方から見下ろす）
-                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailRight, -8.0f), Add(Scale(playerRailDir, 45.0f), Scale(playerRailUp, 25.0f))));
-                    cameraTarget = fighterWorldPos;
+                    // アングル2: 正面斜め前クローズアップ（自機を近くでダイナミックに捉えつつ上部にタイトル空間を確保）
+                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailRight, -9.0f), Add(Scale(playerRailDir, 28.0f), Scale(playerRailUp, 19.5f))));
+                    cameraTarget = Add(fighterWorldPos, Scale(playerRailUp, 4.5f));
                 }
                 else if (currentAngleIndex == 2) {
-                    // アングル3: 上空からのダイナミック俯瞰（ゆっくり旋回）
-                    float angle = localTime * 0.2f - 0.5f;
-                    Vector3 offset = Add(Scale(playerRailDir, -55.0f), Scale(playerRailRight, std::sin(angle) * 30.0f));
-                    targetCamPos = Add(playerRailPos, Add(offset, Scale(playerRailUp, 45.0f)));
-                    cameraTarget = Add(fighterWorldPos, Scale(playerRailDir, 10.0f));
+                    // アングル3: 後方斜め上からの近接ダイナミック旋回（遠すぎず自機がはっきり見える距離に調整）
+                    float angle = localTime * 0.25f - 0.5f;
+                    Vector3 offset = Add(Scale(playerRailDir, -32.0f), Scale(playerRailRight, std::sin(angle) * 20.0f));
+                    targetCamPos = Add(playerRailPos, Add(offset, Scale(playerRailUp, 27.0f)));
+                    cameraTarget = Add(fighterWorldPos, Add(Scale(playerRailDir, 6.0f), Scale(playerRailUp, 4.2f)));
                 }
                 else {
-                    // アングル4: サイド並走カメラ（真横から並走して流し撮り）
-                    float forwardOffset = (localTime - 3.0f) * 8.0f;
-                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailDir, forwardOffset), Add(Scale(playerRailRight, -40.0f), Scale(playerRailUp, 18.0f))));
-                    cameraTarget = fighterWorldPos;
+                    // アングル4: サイド近接並走カメラ（真横〜斜め横の至近距離で自機を大きく流し撮り）
+                    float forwardOffset = (localTime - 3.0f) * 4.2f;
+                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailDir, forwardOffset), Add(Scale(playerRailRight, -26.0f), Scale(playerRailUp, 17.5f))));
+                    cameraTarget = Add(fighterWorldPos, Scale(playerRailUp, 4.5f));
                 }
 
                 if (isCut) {
