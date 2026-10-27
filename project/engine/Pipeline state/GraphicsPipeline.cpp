@@ -14,7 +14,51 @@ GraphicsPipeline* GraphicsPipeline::GetInstance() {
 	return &instance;
 }
 
+void GraphicsPipeline::Reset() {
+	rootSignature_.Reset();
+	pipelineStates_.clear();
+	skyboxPipelineState_.Reset();
+	object3dRootSignature_.Reset();
+	object3dPipelineState_.Reset();
+	object3dBlendNormalPipelineState_.Reset();
+	skydomePipelineState_.Reset();
+	skydomeRootSignature_.Reset();
+	skinningRootSignature_.Reset();
+	skinningPipelineState_.Reset();
+	computeRootSignature_.Reset();
+	skinningComputePipelineState_.Reset();
+	gpuParticleRootSignature_.Reset();
+	gpuParticlePipelineState_.Reset();
+	gpuParticleInitializeRootSignature_.Reset();
+	gpuParticleInitializePipelineState_.Reset();
+	gpuParticleEmitRootSignature_.Reset();
+	gpuParticleEmitPipelineState_.Reset();
+	gpuParticleUpdateRootSignature_.Reset();
+	gpuParticleUpdatePipelineState_.Reset();
+	copyImageRootSignature_.Reset();
+	copyImagePipelineState_.Reset();
+	grayscalePipelineState_.Reset();
+	sepiaPipelineState_.Reset();
+	vignettePipelineState_.Reset();
+	boxFilterPipelineState_.Reset();
+	luminanceOutlinePipelineState_.Reset();
+	radialBlurPipelineState_.Reset();
+	dissolvePipelineState_.Reset();
+	randomPipelineState_.Reset();
+	dissolveRootSignature_.Reset();
+	spriteRootSignature_.Reset();
+	spritePipelineState_.Reset();
+	depthOutlineRootSignature_.Reset();
+	depthOutlinePipelineState_.Reset();
+	if (logStream_.is_open()) {
+		logStream_.close();
+	}
+}
+
 void GraphicsPipeline::Initialize(ID3D12Device* device) {
+	if (rootSignature_) {
+		return;
+	}
 	logStream_.open("ShaderCompile.log");
 
 	Microsoft::WRL::ComPtr<IDxcUtils> dxcUtils;
@@ -1061,6 +1105,9 @@ void GraphicsPipeline::Initialize(ID3D12Device* device) {
 	depthOutlinePsoDesc.PS = { depthOutlinePSBlob->GetBufferPointer(), depthOutlinePSBlob->GetBufferSize() };
 
 	hr = device->CreateGraphicsPipelineState(&depthOutlinePsoDesc, IID_PPV_ARGS(&depthOutlinePipelineState_));
+	if (FAILED(hr)) {
+		Log(logStream_, std::format("Failed to Create DepthOutline PipelineState! hr=0x{:08X}, reason=0x{:08X}\n", (UINT)hr, (UINT)device->GetDeviceRemovedReason()));
+	}
 	assert(SUCCEEDED(hr));
 
 	// --- Sprite用ルートシグネチャ・パイプラインステート作成 ---
@@ -1106,7 +1153,12 @@ void GraphicsPipeline::Initialize(ID3D12Device* device) {
 	spritePsoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
 
 	hr = device->CreateGraphicsPipelineState(&spritePsoDesc, IID_PPV_ARGS(&spritePipelineState_));
+	if (FAILED(hr)) {
+		Log(logStream_, std::format("Failed to Create Sprite PipelineState! hr=0x{:08X}, reason=0x{:08X}\n", (UINT)hr, (UINT)device->GetDeviceRemovedReason()));
+	}
 	assert(SUCCEEDED(hr));
+	Log(logStream_, "GraphicsPipeline::Initialize Completed Successfully.\n");
+	logStream_.close();
 }
 
 
@@ -1138,8 +1190,14 @@ Microsoft::WRL::ComPtr<IDxcBlob> GraphicsPipeline::CompileShader(
 		fullPath.c_str(),
 		L"-E", L"main",
 		L"-T", profile,
+#ifdef _DEBUG
 		L"-Zi", L"-Qembed_debug",
+#endif
+#ifdef _DEBUG
 		L"-Od", L"-Zpr"
+#else
+		L"-O3", L"-Zpr"
+#endif
 	};
 
 	Microsoft::WRL::ComPtr<IDxcResult> shaderResult = nullptr;

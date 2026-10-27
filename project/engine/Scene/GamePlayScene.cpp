@@ -605,7 +605,48 @@ void GamePlayScene::Initialize() {
     hpBarInstancingSrvHandleGPU_ = SrvManager::GetInstance()->GetGPUDescriptorHandle(hpBarInstancingSrvIndex);
     device->CreateShaderResourceView(hpBarInstancingResource_.Get(), &hpBarInstancingSrvDesc, hpBarInstancingSrvHandleCPU);
 
+    // ── 黒煙パーティクル用バッファ生成とマッピング ──
+    smokeInstancingResource_ = CreateBufferResource(device, sizeof(ParticleForGPU) * kMaxSmokeParticles);
+    smokeInstancingResource_->Map(0, nullptr, reinterpret_cast<void**>(&smokeInstancingData_));
+    for (uint32_t i = 0; i < kMaxSmokeParticles; ++i) {
+        smokeInstancingData_[i].WVP = MakeIdentity4x4();
+        smokeInstancingData_[i].World = MakeIdentity4x4();
+        smokeInstancingData_[i].color = { 0.0f, 0.0f, 0.0f, 0.0f };
+        smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
+    }
 
+    D3D12_SHADER_RESOURCE_VIEW_DESC smokeInstancingSrvDesc{};
+    smokeInstancingSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+    smokeInstancingSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    smokeInstancingSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    smokeInstancingSrvDesc.Buffer.FirstElement = 0;
+    smokeInstancingSrvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+    smokeInstancingSrvDesc.Buffer.NumElements = kMaxSmokeParticles;
+    smokeInstancingSrvDesc.Buffer.StructureByteStride = sizeof(ParticleForGPU);
+
+    uint32_t smokeInstancingSrvIndex = SrvManager::GetInstance()->Allocate();
+    D3D12_CPU_DESCRIPTOR_HANDLE smokeInstancingSrvHandleCPU = SrvManager::GetInstance()->GetCPUDescriptorHandle(smokeInstancingSrvIndex);
+    smokeInstancingSrvHandleGPU_ = SrvManager::GetInstance()->GetGPUDescriptorHandle(smokeInstancingSrvIndex);
+    device->CreateShaderResourceView(smokeInstancingResource_.Get(), &smokeInstancingSrvDesc, smokeInstancingSrvHandleCPU);
+
+    smokeParticles_.resize(kMaxSmokeParticles);
+    for (uint32_t i = 0; i < kMaxSmokeParticles; ++i) {
+        smokeParticles_[i].currentTime = 9999.0f;
+        smokeParticles_[i].lifeTime = 1.0f;
+    }
+
+    // 墜落演出関連変数の初期化
+    isPlayerDead_ = false;
+    playerDeathTimer_ = 0.0f;
+    crashExplosionTimer_ = 0.0f;
+    isFighterDestroyed_ = false;
+    hasCrashExploded_ = false;
+    playerCrashVel_ = { 0.0f, 0.0f, 0.0f };
+    playerCrashLocalPos_ = { 0.0f, 0.0f, 0.0f };
+    playerCrashSpin_ = 0.0f;
+    playerCrashPitch_ = 0.0f;
+    playerCrashYaw_ = 0.0f;
+    crashSitePos_ = { 0.0f, 0.0f, 0.0f };
 
     // HP関連変数の初期化
     playerHP_ = 100.0f;
@@ -1568,6 +1609,68 @@ void GamePlayScene::Finalize() {
     }
 }
 
+void GamePlayScene::EmitCrashSmoke(const Vector3& pos, const Vector3& inheritedVel, bool isFireEmber) {
+    if (smokeParticles_.empty()) return;
+
+    // 空きスロットまたは最も寿命が進んでいるスロットを探索
+    SmokeParticle* target = nullptr;
+    for (auto& sp : smokeParticles_) {
+        if (sp.currentTime >= sp.lifeTime) {
+            target = &sp;
+            break;
+        }
+    }
+    if (!target) {
+        float maxProg = -1.0f;
+        for (auto& sp : smokeParticles_) {
+            float prog = sp.currentTime / (sp.lifeTime > 0.0f ? sp.lifeTime : 1.0f);
+            if (prog > maxProg) {
+                maxProg = prog;
+                target = &sp;
+            }
+        }
+    }
+    if (!target) return;
+
+    std::uniform_real_distribution<float> distOffset(-1.4f, 1.4f);
+    std::uniform_real_distribution<float> distVelSpread(-4.0f, 4.0f);
+    std::uniform_real_distribution<float> distUp(2.5f, 7.0f);
+    std::uniform_real_distribution<float> distScale(2.2f, 4.2f);
+    std::uniform_real_distribution<float> distLife(1.3f, 2.0f);
+    std::uniform_real_distribution<float> distCol(0.04f, 0.16f);
+
+    target->position = {
+        pos.x + distOffset(randomEngine_),
+        pos.y + distOffset(randomEngine_),
+        pos.z + distOffset(randomEngine_)
+    };
+    // 飛行慣性の半分を引き継ぎつつ、熱気流で上へ上昇・周囲へ拡散
+    target->velocity = {
+        inheritedVel.x * 0.35f + distVelSpread(randomEngine_),
+        inheritedVel.y * 0.25f + distUp(randomEngine_),
+        inheritedVel.z * 0.35f + distVelSpread(randomEngine_)
+    };
+    float sc = distScale(randomEngine_);
+    target->scale = { sc, sc, 1.0f };
+    target->growthRate = 4.8f + (float)(randomEngine_() % 100) / 35.0f; // 膨らみながらモクモク広がる
+    target->lifeTime = distLife(randomEngine_);
+    target->currentTime = 0.0f;
+
+    if (isFireEmber) {
+        // 煙の中に混ざる燃え盛る火の粉・炎
+        target->color = { 1.0f, 0.45f, 0.08f, 0.95f };
+        target->initialAlpha = 0.95f;
+        target->scale = { sc * 0.65f, sc * 0.65f, 1.0f };
+        target->growthRate = 2.2f;
+    } else {
+        // 重厚な黒煙・濃灰色の煙
+        float c = distCol(randomEngine_);
+        float alpha = 0.85f + (float)(randomEngine_() % 15) / 100.0f;
+        target->color = { c, c, c, alpha };
+        target->initialAlpha = alpha;
+    }
+}
+
 void GamePlayScene::Update() {
     float kDeltaTime = 1.0f / 60.0f;
 
@@ -1922,9 +2025,64 @@ void GamePlayScene::Update() {
         }
     }
     
-    if (playerHP_ <= 0.0f && !isTitleMode_) {
-        SceneManager::GetInstance()->ChangeScene("GAMEOVER");
-        return;
+    // ── プレイヤー被撃墜・墜落演出の開始判定 ──
+    if (playerHP_ <= 0.0f && !isTitleMode_ && !isPlayerDead_) {
+        isPlayerDead_ = true;
+        playerDeathTimer_ = 0.0f;
+        crashExplosionTimer_ = 0.0f;
+        isFighterDestroyed_ = false;
+        hasCrashExploded_ = false;
+
+        // 墜落開始時の機体ローカル座標と回転を保存
+        if (fighterModel_) {
+            playerCrashLocalPos_ = fighterModel_->transform.translate;
+        }
+        playerCrashSpin_ = playerRotationRoll_;
+        playerCrashPitch_ = playerRotationPitch_;
+        playerCrashYaw_ = 0.0f;
+
+        // 初期の横ドリフト・降下初速
+        std::uniform_real_distribution<float> distDrift(-10.0f, 10.0f);
+        playerCrashVel_ = { distDrift(randomEngine_), -6.0f, 0.0f };
+
+        // ブースト・バレルロールを解除
+        isBarrelRolling_ = false;
+        isBoosting_ = false;
+        boostBlurWidth_ = 0.0f;
+
+        // 被弾・破壊の初期衝撃
+        cameraShakeTimer_ = 0.50f;
+        cameraShakeIntensity_ = 5.0f;
+        activeShakeIntensity_ = 5.0f;
+        cameraShakeTimeMax_ = 0.50f;
+
+        Vector3 pRailPos = GetRailPosition(fighterWorldZ_);
+        Vector3 pRailDir = GetRailDirection(fighterWorldZ_);
+        Vector3 pRailRight = CalculateRailRight(pRailDir);
+        Vector3 pRailUp = CalculateRailUp(pRailDir, pRailRight);
+        float pOffsetUp = playerCrashLocalPos_.y + 17.0f;
+        Vector3 fighterPos = Add(pRailPos, Add(Scale(pRailRight, playerCrashLocalPos_.x), Scale(pRailUp, pOffsetUp)));
+
+        if (particleManager_) {
+            particleManager_->EmitCustomSparks(fighterPos, 90.0f, 40, { 1.0f, 0.6f, 0.1f }, 1.2f);
+            particleManager_->EmitRing(fighterPos, { 1.0f, 0.3f, 0.1f });
+        }
+        if (audio_) {
+            PlaySE(jumpSE_, false, 2.0f);
+        }
+    }
+
+    // ── プレイヤー墜落演出中のゲームオーバー画面への遷移 ──
+    if (isPlayerDead_) {
+        playerDeathTimer_ += kDeltaTime;
+        if (hasCrashExploded_) {
+            crashExplosionTimer_ += kDeltaTime;
+            // 地面激突爆発から1.2秒経過したらGameOver画面へ切り替え
+            if (crashExplosionTimer_ >= 1.2f) {
+                SceneManager::GetInstance()->ChangeScene("GAMEOVER");
+                return;
+            }
+        }
     }
 
     if (isTitleMode_) {
@@ -2676,7 +2834,14 @@ void GamePlayScene::Update() {
         // ── 1. プレイヤーのワールドZ座標を自律前進（フェーズ演出中も前進・疾走感を維持） ──────────────────
         bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
         if (!isWaitingForTransition && !isBossIntro && !isBossDefeatedSequence_) {
-            fighterWorldZ_ += boostForwardSpeed_ * kDeltaTime;
+            if (isPlayerDead_) {
+                if (!hasCrashExploded_) {
+                    boostForwardSpeed_ = std::lerp(boostForwardSpeed_, 30.0f, 0.04f);
+                    fighterWorldZ_ += boostForwardSpeed_ * kDeltaTime;
+                }
+            } else {
+                fighterWorldZ_ += boostForwardSpeed_ * kDeltaTime;
+            }
         }
 
         // ── 2. カメラは等速追従をベースにしつつ、ブースト時やフェーズ演出時はG遅延を適用 ──
@@ -2721,7 +2886,7 @@ void GamePlayScene::Update() {
                 // フェーズ演出中は自機を画面中央へ滑らかにセンタリングして見栄えを良くする
                 fighterModel_->transform.translate.x = std::lerp(fighterModel_->transform.translate.x, 0.0f, 0.12f);
                 fighterModel_->transform.translate.y = std::lerp(fighterModel_->transform.translate.y, 0.0f, 0.12f);
-            } else if (!isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
+            } else if (!isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_ && !isPlayerDead_) {
                 if (input_->IsKeyPressed(DIK_W)) inputDir.y += 1.0f;
                 if (input_->IsKeyPressed(DIK_S)) inputDir.y -= 1.0f;
                 if (input_->IsKeyPressed(DIK_A)) inputDir.x -= 1.0f;
@@ -2745,6 +2910,25 @@ void GamePlayScene::Update() {
 
             fighterModel_->transform.translate.x = std::clamp(fighterModel_->transform.translate.x, -playerLimitX_, playerLimitX_);
             fighterModel_->transform.translate.y = std::clamp(fighterModel_->transform.translate.y, -playerLimitY_, playerLimitY_);
+
+            // ── 墜落中の自機キリモミ・急降下挙動の適用 ──
+            if (isPlayerDead_) {
+                if (!hasCrashExploded_) {
+                    // 下向き重力加速度（墜落）
+                    playerCrashVel_.y -= 38.0f * kDeltaTime;
+                    playerCrashLocalPos_.y += playerCrashVel_.y * kDeltaTime;
+                    playerCrashLocalPos_.x += playerCrashVel_.x * kDeltaTime;
+
+                    // 制御不能なキリモミ回転 (高速ロールスピン、下向きピッチ急降下、不規則な揺れ)
+                    playerCrashSpin_ += 16.0f * kDeltaTime;
+                    playerCrashPitch_ = std::lerp(playerCrashPitch_, -0.80f, 0.05f);
+                    playerCrashYaw_ += std::sin(playerDeathTimer_ * 14.0f) * 0.05f;
+
+                    fighterModel_->transform.translate = playerCrashLocalPos_;
+                } else {
+                    fighterModel_->transform.translate = playerCrashLocalPos_;
+                }
+            }
 
             int currentAngleIndex = 0;
             float localTime = 0.0f;
@@ -2774,6 +2958,60 @@ void GamePlayScene::Update() {
             // 基準高さは路面 -20.0f からプレイヤーは通常 -3.0f (つまり相対 +17.0f)
             float playerOffsetUp = fighterModel_->transform.translate.y + 17.0f;
             Vector3 fighterWorldPos = Add(playerRailPos, Add(Scale(playerRailRight, fighterModel_->transform.translate.x), Scale(playerRailUp, playerOffsetUp)));
+
+            // ── 墜落中の黒煙＆火花エミット ＆ 地面衝突判定 ──
+            if (isPlayerDead_) {
+                if (!hasCrashExploded_) {
+                    // 自機からモクモクと激しい黒煙と火の粉を放出
+                    Vector3 forwardVel = Scale(playerRailDir, boostForwardSpeed_);
+                    EmitCrashSmoke(fighterWorldPos, forwardVel, false); // 黒煙
+                    EmitCrashSmoke(fighterWorldPos, forwardVel, false); // 黒煙2
+                    if ((randomEngine_() % 3) == 0) {
+                        EmitCrashSmoke(fighterWorldPos, forwardVel, true); // 火炎・火の粉
+                    }
+                    if (particleManager_ && (randomEngine_() % 2) == 0) {
+                        particleManager_->EmitCustomSparks(fighterWorldPos, 35.0f, 3, { 1.0f, 0.6f, 0.1f }, 0.8f);
+                    }
+
+                    // 地面衝突判定（路面はY=-20.0f、playerOffsetUp <= 1.0f、またはローカルY <= -16.0f、または2.0秒経過）
+                    if (playerOffsetUp <= 1.0f || playerCrashLocalPos_.y <= -16.0f || playerDeathTimer_ >= 2.0f) {
+                        hasCrashExploded_ = true;
+                        isFighterDestroyed_ = true;
+                        crashSitePos_ = fighterWorldPos;
+                        crashSitePos_.y = -20.0f; // 確実に路面高さに固定
+
+                        // 地面激突の大爆発！（火炎、火花、衝撃波シリンダー、黒煙のみ）
+                        if (particleManager_) {
+                            particleManager_->EmitFlame(crashSitePos_, 45.0f, 80, { 1.0f, 0.4f, 0.05f });
+                            particleManager_->EmitCustomSparks(crashSitePos_, 180.0f, 100, { 1.0f, 0.85f, 0.2f }, 2.0f);
+                            particleManager_->EmitMegaRing(crashSitePos_, { 1.0f, 0.5f, 0.1f });
+                            particleManager_->EmitMegaCylinder(crashSitePos_, { 1.0f, 0.4f, 0.1f });
+                        }
+                        if (audio_) {
+                            PlaySE(jumpSE_, false, 2.5f);
+                        }
+
+                        // 爆発の瞬間、激震シェイクと強烈な爆発フラッシュ
+                        cameraShakeTimer_ = 0.85f;
+                        cameraShakeIntensity_ = 10.0f;
+                        activeShakeIntensity_ = 10.0f;
+                        cameraShakeTimeMax_ = 0.85f;
+
+                        flashAlpha_ = 1.0f;
+                        flashColor_ = { 1.0f, 0.65f, 0.15f, 1.0f };
+
+                        useRadialBlur_ = true;
+                        blurIntensity_ = 0.09f;
+                        maxBlurWidth_ = 0.09f;
+                    }
+                } else {
+                    // 激突後：燃え盛るクレーターから黒煙が立ち上り続ける
+                    EmitCrashSmoke(crashSitePos_, { 0.0f, 5.0f, 0.0f }, false);
+                    if ((randomEngine_() % 4) == 0) {
+                        EmitCrashSmoke(crashSitePos_, { 0.0f, 4.0f, 0.0f }, true);
+                    }
+                }
+            }
 
             if (isTitleMode_) {
                 if (isTitleTransitioning_) {
@@ -2898,6 +3136,11 @@ void GamePlayScene::Update() {
                 Vector3 camBackVector = Scale(playerRailDir, -currentDist);
                 Vector3 targetCamPos = Add(playerRailPos, Add(camBackVector, Add(Scale(playerRailRight, camRelativeX_), Scale(playerRailUp, camOffsetUp))));
 
+                // 墜落時はカメラが地面に潜らないよう下限高さを担保
+                if (isPlayerDead_ && targetCamPos.y < -15.0f) {
+                    targetCamPos.y = -15.0f;
+                }
+
                 // カメラ位置のスムーズ追従 (Smooth Follow、遷移待機中は即座に初期定位置へ固定)
                 float posLerpFactor = isWaitingForTransition ? 1.0f : 0.12f;
                 Vector3 camDiff = Subtract(targetCamPos, camTrans.translate);
@@ -2910,10 +3153,10 @@ void GamePlayScene::Update() {
 
                 // ── カメラの注視ターゲット（LookAhead & LookAt）の計算 ──
                 // プレイヤーの少し先（20.0m 先）を注視点とする
-                float lookAheadDist = 20.0f;
+                float lookAheadDist = isPlayerDead_ ? 5.0f : 20.0f;
                 Vector3 lookAheadTarget = Add(fighterWorldPos, Scale(playerRailDir, lookAheadDist));
                 // プレイヤーの少し上（5.0m 上）を狙う
-                Vector3 cameraTarget = Add(lookAheadTarget, Scale(playerRailUp, 5.0f));
+                Vector3 cameraTarget = Add(lookAheadTarget, Scale(playerRailUp, isPlayerDead_ ? 2.0f : 5.0f));
 
                 // カメラの現在位置から注視ターゲットへの方向ベクトル
                 Vector3 lookDir = Subtract(cameraTarget, camTrans.translate);
@@ -2973,6 +3216,10 @@ void GamePlayScene::Update() {
             playerRotationPitch_ = std::lerp(playerRotationPitch_, basePitch, 0.1f);
 
             float rollAngle = playerRotationRoll_;
+            if (isPlayerDead_) {
+                rollAngle = playerCrashSpin_;
+                playerRotationPitch_ = playerCrashPitch_;
+            }
 
             // フェーズ演出中の高速バレルロール＆退場スナップロール演出
             if (phaseIntroTimer_ >= 0.0f && !isTitleMode_) {
@@ -3010,6 +3257,10 @@ void GamePlayScene::Update() {
             }
 
             fighterModel_->transform.rotate.z = rollAngle;
+            if (isPlayerDead_) {
+                fighterModel_->transform.rotate.x = playerCrashPitch_;
+                fighterModel_->transform.rotate.y = playerCrashYaw_;
+            }
 
             // 機体自体の向きをレールの進行方向に滑らかに合わせる
             float basePlayerRotY = std::atan2(playerRailDir.x, playerRailDir.z);
@@ -3036,14 +3287,15 @@ void GamePlayScene::Update() {
             R_rail.m[2][0] = playerRailDir.x;   R_rail.m[2][1] = playerRailDir.y;   R_rail.m[2][2] = playerRailDir.z;
 
             // モデルのローカル回転 (Z:ロール -> X:ピッチ -> Y:180度反転)
-            Matrix4x4 rotateY = MakeRotateYMatrix(static_cast<float>(M_PI));
+            Matrix4x4 rotateY = MakeRotateYMatrix(static_cast<float>(M_PI) + (isPlayerDead_ ? playerCrashYaw_ : 0.0f));
             Matrix4x4 rotateX = MakeRotateXMatrix(playerRotationPitch_);
             Matrix4x4 rotateZ = MakeRotateZMatrix(rollAngle);
             Matrix4x4 R_local = Multiply(Multiply(rotateZ, rotateX), rotateY);
 
             // 最終姿勢行列の算出とワールド行列の組み立て
             Matrix4x4 R_final = Multiply(R_local, R_rail);
-            Matrix4x4 scaleMatrix = MakeScaleMatrix(fighterModel_->transform.scale);
+            Vector3 fScale = isFighterDestroyed_ ? Vector3{ 0.0f, 0.0f, 0.0f } : fighterModel_->transform.scale;
+            Matrix4x4 scaleMatrix = MakeScaleMatrix(fScale);
             Matrix4x4 translateMatrix = MakeTranslateMatrix(fighterWorldPos);
             fighterTransformData_->World = Multiply(Multiply(scaleMatrix, R_final), translateMatrix);
 
@@ -3215,7 +3467,10 @@ void GamePlayScene::Update() {
 
 
             // ── Blender同期: game_state.jsonの出力（3フレームに1回）──
-            if (++blenderSyncCounter_ % 3 == 0) {
+            if (input_->IsKeyTriggered(DIK_B) && !isTitleMode_) {
+                isBlenderSyncEnabled_ = !isBlenderSyncEnabled_;
+            }
+            if (isBlenderSyncEnabled_ && ++blenderSyncCounter_ % 5 == 0) {
                 std::ostringstream oss;
                 oss << "{\n";
                 // フェーズ情報
@@ -3459,9 +3714,9 @@ void GamePlayScene::Update() {
             aimReticlePos_.z = std::lerp(aimReticlePos_.z, targetReticlePos.z, aimLerpSpeed);
             Vector3 reticlePos = aimReticlePos_;
 
-            // ボス登場演出中は射撃を禁止
+            // ボス登場演出中・撃墜墜落中は射撃を禁止
             bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
-            if (input_->IsKeyTriggered(DIK_SPACE) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_) {
+            if (input_->IsKeyTriggered(DIK_SPACE) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_ && !isPlayerDead_) {
                 // 翼の発射位置をレールのright/up方向で計算
                 Vector3 leftWing  = Add(fighterWorldPos, Add(Scale(playerRailRight, -2.5f), Scale(playerRailUp, 0.8f)));
                 Vector3 rightWing = Add(fighterWorldPos, Add(Scale(playerRailRight,  2.5f), Scale(playerRailUp, 0.8f)));
@@ -5377,7 +5632,7 @@ void GamePlayScene::Update() {
         camera_->GetTransform().translate.z,
         fighterWorldPos,
         isBoosting_ || isPhaseIntroBoost,
-        (sceneMode_ == SceneMode::kFighter && !isBossDefeatedSequence_ && !hidePlayerForTransition),
+        (sceneMode_ == SceneMode::kFighter && !isBossDefeatedSequence_ && !hidePlayerForTransition && !isPlayerDead_),
         currentEffect_,
         emitterPos_,
         leftJetPos,
@@ -5533,6 +5788,64 @@ void GamePlayScene::Update() {
         }
     }
 
+    // ── 墜落黒煙パーティクル（3Dビルボード）の更新・行列計算 ──
+    if (smokeInstancingData_) {
+        Matrix4x4 viewProj = camera_->GetViewProjectionMatrix();
+        Matrix4x4 billboard = camera_->GetBillboardMatrix();
+
+        for (uint32_t i = 0; i < kMaxSmokeParticles; ++i) {
+            if (smokeParticles_[i].currentTime < smokeParticles_[i].lifeTime) {
+                smokeParticles_[i].currentTime += kDeltaTime;
+                if (smokeParticles_[i].currentTime >= smokeParticles_[i].lifeTime) {
+                    smokeInstancingData_[i].World = MakeIdentity4x4();
+                    smokeInstancingData_[i].WVP = MakeIdentity4x4();
+                    smokeInstancingData_[i].color = { 0.0f, 0.0f, 0.0f, 0.0f };
+                    smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
+                    continue;
+                }
+
+                float t = smokeParticles_[i].currentTime / smokeParticles_[i].lifeTime;
+                // 位置更新 (初速 + 上昇気流 + 空気抵抗による水平減速)
+                smokeParticles_[i].position = Add(smokeParticles_[i].position, Scale(smokeParticles_[i].velocity, kDeltaTime));
+                smokeParticles_[i].velocity.x *= (1.0f - 1.2f * kDeltaTime);
+                smokeParticles_[i].velocity.z *= (1.0f - 1.2f * kDeltaTime);
+                smokeParticles_[i].velocity.y += 3.5f * kDeltaTime;
+
+                // サイズ成長 (黒煙はもくもくと広がる)
+                smokeParticles_[i].scale.x += smokeParticles_[i].growthRate * kDeltaTime;
+                smokeParticles_[i].scale.y += smokeParticles_[i].growthRate * kDeltaTime;
+
+                // アルファフェード (前半濃く、後半自然に消える)
+                float alpha = smokeParticles_[i].initialAlpha;
+                if (t < 0.15f) {
+                    alpha = (t / 0.15f) * smokeParticles_[i].initialAlpha;
+                } else {
+                    alpha = (1.0f - (t - 0.15f) / 0.85f) * smokeParticles_[i].initialAlpha;
+                }
+
+                Matrix4x4 world = Multiply(MakeScaleMatrix(smokeParticles_[i].scale), billboard);
+                world.m[3][0] = smokeParticles_[i].position.x;
+                world.m[3][1] = smokeParticles_[i].position.y;
+                world.m[3][2] = smokeParticles_[i].position.z;
+
+                smokeInstancingData_[i].World = world;
+                smokeInstancingData_[i].WVP = Multiply(world, viewProj);
+                smokeInstancingData_[i].color = {
+                    smokeParticles_[i].color.x,
+                    smokeParticles_[i].color.y,
+                    smokeParticles_[i].color.z,
+                    alpha
+                };
+                smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
+            } else {
+                smokeInstancingData_[i].World = MakeIdentity4x4();
+                smokeInstancingData_[i].WVP = MakeIdentity4x4();
+                smokeInstancingData_[i].color = { 0.0f, 0.0f, 0.0f, 0.0f };
+                smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
+            }
+        }
+    }
+
     if (gpuParticleManager_) {
         gpuParticleManager_->Update(camera_->GetViewProjectionMatrix(), camera_->GetBillboardMatrix(), kDeltaTime);
     }
@@ -5658,9 +5971,9 @@ void GamePlayScene::Draw() {
             commandList->SetPipelineState(graphicsPipeline_->GetObject3dPipelineState());
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetObject3dRootSignature());
 
-            // 自機(Fighter)描画（画面外から突っ込んできたプレイヤー機が定位置に配置されるまでは元から立っている方を非表示にする）
+            // 自機(Fighter)描画（画面外から突っ込んできたプレイヤー機が定位置に配置されるまでは元から立っている方を非表示にする、撃墜地面激突時も非表示）
             bool hidePlayerForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
-            if (fighterModel_ && !hidePlayerForTransition) {
+            if (fighterModel_ && !hidePlayerForTransition && !isFighterDestroyed_) {
                 if (fighterTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, fighterTransformResource_->GetGPUVirtualAddress());
                 if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
                 if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
@@ -5880,10 +6193,10 @@ void GamePlayScene::Draw() {
             }
         }
         
-        // エイミング(レティクル)の描画 (ボス登場演出中および画面外からの突入配置中は非表示)
+        // エイミング(レティクル)の描画 (ボス登場演出中、画面外からの突入配置中、および撃墜墜落中は非表示)
         bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
         bool hideReticleForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
-        if (!isBossIntro && !isTitleMode_ && !hideReticleForTransition && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
+        if (!isBossIntro && !isTitleMode_ && !hideReticleForTransition && !isPlayerDead_ && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
             commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             if (graphicsPipeline_->GetPipelineState(kBlendModeNormal)) {
@@ -5902,6 +6215,18 @@ void GamePlayScene::Draw() {
                 commandList->SetPipelineState(graphicsPipeline_->GetPipelineState(kBlendModeNormal));
                 if (particleModel_) {
                     particleModel_->Draw(commandList, kMaxWebBullets, spiderWebSrvHandleGPU_, webBulletInstancingSrvHandleGPU_);
+                }
+            }
+        }
+
+        // 墜落黒煙パーティクル（3Dビルボード）の描画 (Normalブレンドで背景を遮るリアルな黒煙を表現)
+        if (graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
+            commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
+            commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            if (graphicsPipeline_->GetPipelineState(kBlendModeNormal)) {
+                commandList->SetPipelineState(graphicsPipeline_->GetPipelineState(kBlendModeNormal));
+                if (particleModel_) {
+                    particleModel_->Draw(commandList, kMaxSmokeParticles, TextureManager::GetInstance()->GetSrvHandleGPU("circle2.png"), smokeInstancingSrvHandleGPU_);
                 }
             }
         }
@@ -7157,7 +7482,7 @@ void GamePlayScene::DrawDemo() {
         if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
 
         // プレイヤー戦闘機の描画
-        if (fighterModel_ && fighterTransformResource_ && !LoadingScreen::GetInstance()->ShouldHideInGamePlayer()) {
+        if (fighterModel_ && fighterTransformResource_ && !LoadingScreen::GetInstance()->ShouldHideInGamePlayer() && !isFighterDestroyed_) {
             commandList->SetGraphicsRootConstantBufferView(1, fighterTransformResource_->GetGPUVirtualAddress());
             fighterModel_->DrawModel(commandList, TextureManager::GetInstance()->GetSrvHandleGPU("Player2/Player_basecolor.JPEG"), TextureManager::GetInstance()->GetSrvHandleGPU("test.dds"));
         }

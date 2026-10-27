@@ -1,4 +1,4 @@
-#include "TextureManager.h"
+﻿#include "TextureManager.h"
 #include "DirectXCommon.h"
 #include "D3D12Util.h"
 #include <cassert>
@@ -38,8 +38,10 @@ void TextureManager::Initialize(ID3D12Device* device, std::string directoryPath)
     srvHeap_ = SrvManager::GetInstance()->GetDescriptorHeap();
 
     // コマンドリストの初期化
-    device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_));
-    device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), nullptr, IID_PPV_ARGS(&commandList_));
+    HRESULT hr = device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_));
+    if (SUCCEEDED(hr) && commandAllocator_) {
+        device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), nullptr, IID_PPV_ARGS(&commandList_));
+    }
 }
 
 uint32_t TextureManager::Allocate() {
@@ -50,6 +52,10 @@ void TextureManager::LoadTexture(const std::string& fileName) {
     if (textureDatas_.contains(fileName)) {
         return;
     }
+
+    char traceBuf[512];
+    sprintf_s(traceBuf, "[TextureManager] Start LoadTexture: %s\n", fileName.c_str());
+    OutputDebugStringA(traceBuf);
 
     std::string fullPath = directoryPath_ + fileName;
     std::wstring filePathW = ConvertString(fullPath);
@@ -86,8 +92,6 @@ void TextureManager::LoadTexture(const std::string& fileName) {
     }
 
     // 【ミップマップ生成前】切り抜き画像（isihahen.png）の透明〜半透明ピクセルのRGBを黒にクリアする。
-    // これにより、ミップマップ生成（縮小フィルタ）時に透明ピクセルの不要な色（赤）が周囲の不透明ピクセルににじみ出るのを防ぐ。
-    // パスは大文字小文字を区別しないように判定する。
     std::string fullPathLower = fullPath;
     std::transform(fullPathLower.begin(), fullPathLower.end(), fullPathLower.begin(), [](unsigned char c) { return std::tolower(c); });
 
@@ -99,13 +103,12 @@ void TextureManager::LoadTexture(const std::string& fileName) {
                 uint8_t* row = pixels + y * img->rowPitch;
                 for (size_t x = 0; x < img->width; ++x) {
                     uint8_t* pixel = row + x * 4;
-                    // アルファが255未満かつ、色が赤に近いピクセル（赤フリンジ）を黒（透明）にクリア
                     if (pixel[3] < 255) {
                         if (pixel[0] > 150 && pixel[1] < 80 && pixel[2] < 80) {
-                            pixel[0] = 0; // R
-                            pixel[1] = 0; // G
-                            pixel[2] = 0; // B
-                            pixel[3] = 0; // Aも完全に透明にする
+                            pixel[0] = 0;
+                            pixel[1] = 0;
+                            pixel[2] = 0;
+                            pixel[3] = 0;
                         }
                     }
                 }
@@ -113,32 +116,23 @@ void TextureManager::LoadTexture(const std::string& fileName) {
         }
     }
 
-    // ミップマップ生成判定:
-    // ・圧縮フォーマット（DXT等）はそのまま使う（生成不可）
-    // ・既にミップマップが存在する場合はそのまま使う
-    // ・非圧縮DDSかつミップマップなし → ミップマップを生成する（MipMapLODBiasによるぼかしを有効にするため）
     DirectX::ScratchImage mipImages{};
     bool isCompressed = DirectX::IsCompressed(image.GetMetadata().format);
     bool hasMips = image.GetMetadata().mipLevels > 1;
     bool tooSmall = image.GetMetadata().width < 4 || image.GetMetadata().height < 4;
     if (isCompressed || hasMips || tooSmall) {
-        // 圧縮済み・ミップあり・小さすぎる場合はそのまま
         mipImages = std::move(image);
     } else {
-        // 非圧縮でミップなし（新しいRGBA DDSを含む）→ ミップマップを生成する
         hr = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::TEX_FILTER_DEFAULT, 0, mipImages);
         if (FAILED(hr)) {
-            // 生成失敗時はそのまま使う
             mipImages = std::move(image);
         }
     }
 
-    // 【ミップマップ生成後】切り抜き画像（isihahen.png）の全ミップレベルで
-    // 透明〜半透明ピクセルのRGBを黒にクリアする。
+    // 【ミップマップ生成後】切り抜き画像（isihahen.png）の全ミップレベルでクリア
     if (fullPathLower.find("isihahen") != std::string::npos) {
         const DirectX::TexMetadata& meta = mipImages.GetMetadata();
         for (size_t mip = 0; mip < meta.mipLevels; ++mip) {
-            // 2Dテクスチャは GetImage(mipLevel, arrayIndex=0, depth=0)
             const DirectX::Image* img = mipImages.GetImage(mip, 0, 0);
             if (!img || !img->pixels) continue;
             uint8_t* pixels = img->pixels;
@@ -146,13 +140,12 @@ void TextureManager::LoadTexture(const std::string& fileName) {
                 uint8_t* row = pixels + y * img->rowPitch;
                 for (size_t x = 0; x < img->width; ++x) {
                     uint8_t* pixel = row + x * 4;
-                    // アルファが255未満かつ、色が赤に近いピクセル（赤フリンジ）を黒（透明）にクリア
                     if (pixel[3] < 255) {
                         if (pixel[0] > 150 && pixel[1] < 80 && pixel[2] < 80) {
-                            pixel[0] = 0; // R
-                            pixel[1] = 0; // G
-                            pixel[2] = 0; // B
-                            pixel[3] = 0; // Aも完全に透明にする
+                            pixel[0] = 0;
+                            pixel[1] = 0;
+                            pixel[2] = 0;
+                            pixel[3] = 0;
                         }
                     }
                 }
@@ -164,17 +157,15 @@ void TextureManager::LoadTexture(const std::string& fileName) {
     Microsoft::WRL::ComPtr<ID3D12Resource> textureResource = ::CreateTextureResource(device_, metadata);
 
     if (!textureResource) {
-        assert(false && "Failed to create texture resource.");
+        char errBuf[512];
+        sprintf_s(errBuf, "[TextureManager ERROR] Failed to create texture resource: %s\n", fileName.c_str());
+        OutputDebugStringA(errBuf);
         return;
     }
 
-    DirectXCommon* dxCommon = DirectXCommon::GetInstance();
-    
     // UploadTextureData が内部で自己完結してアップロード・待機まで行う
     Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource =
         ::UploadTextureData(textureResource.Get(), mipImages, device_, nullptr);
-
-
 
     uint32_t srvIndex = Allocate();
     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = SrvManager::GetInstance()->GetCPUDescriptorHandle(srvIndex);
@@ -192,6 +183,9 @@ void TextureManager::LoadTexture(const std::string& fileName) {
     data.srvHandleCPU = cpuHandle;
     data.srvHandleGPU = gpuHandle;
     data.metadata = metadata;
+
+    sprintf_s(traceBuf, "[TextureManager] Finished LoadTexture: %s\n", fileName.c_str());
+    OutputDebugStringA(traceBuf);
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE TextureManager::GetSrvHandleGPU(const std::string& fileName) {

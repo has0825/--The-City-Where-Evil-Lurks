@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <dxcapi.h>
 #include <wrl.h>
@@ -24,6 +24,9 @@ public:
 
     // 初期化
     void Initialize(ID3D12Device* device);
+
+    // リセット（デバイス再生成時用）
+    void Reset();
 
     // ゲッター
     ID3D12RootSignature* GetRootSignature() const { return rootSignature_.Get(); }

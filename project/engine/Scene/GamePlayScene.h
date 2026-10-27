@@ -751,6 +751,7 @@ private:
 
     // ── Blender連携 (リアルタイム同期 / リプレイ録画 / パラメータ受信) ──
     static int  blenderSyncCounter_;        // game_state.json 書き出し間隔カウンタ
+    bool        isBlenderSyncEnabled_ = false; // Blenderリアルタイム同期フラグ (通常は無効化してディスクI/O負荷を軽減)
     bool        replayRecording_ = false;   // リプレイ録画中フラグ
     int         replayFrameCounter_ = 0;    // 録画フレーム番号
     int         replaySessionIndex_ = 0;    // リプレイセッションのインデックス
@@ -768,6 +769,37 @@ private:
     bool isBossModelVisible_ = true; // ボス自体の表示フラグ
     bool hasHitBoss_ = false; // ボスにヒットしたか
     float bossDefeatHitTimer_ = 0.0f; // ヒット後の経過時間タイマー
+
+    // ── プレイヤー撃墜・墜落演出用 ──
+    bool isPlayerDead_ = false;          // 墜落演出中フラグ
+    float playerDeathTimer_ = 0.0f;      // 墜落経過タイマー
+    float crashExplosionTimer_ = 0.0f;   // 地面激突後の経過タイマー
+    bool isFighterDestroyed_ = false;    // 地面衝突後の機体非表示フラグ
+    bool hasCrashExploded_ = false;      // 地面衝突大爆発発火フラグ
+    Vector3 playerCrashVel_ = { 0.0f, 0.0f, 0.0f }; // 墜落速度
+    Vector3 playerCrashLocalPos_ = { 0.0f, 0.0f, 0.0f }; // 墜落中の機体ローカル座標
+    float playerCrashSpin_ = 0.0f;       // キリモミ回転（ロール）
+    float playerCrashPitch_ = 0.0f;      // 墜落ピッチ角
+    float playerCrashYaw_ = 0.0f;        // 墜落ヨー角
+    Vector3 crashSitePos_ = { 0.0f, 0.0f, 0.0f }; // 墜落爆発地点のワールド座標
+
+    // 黒煙パーティクル管理
+    struct SmokeParticle {
+        Vector3 position = { 0.0f, 0.0f, 0.0f };
+        Vector3 velocity = { 0.0f, 0.0f, 0.0f };
+        Vector3 scale = { 1.0f, 1.0f, 1.0f };
+        Vector4 color = { 0.1f, 0.1f, 0.1f, 1.0f };
+        float lifeTime = 1.0f;
+        float currentTime = 9999.0f;
+        float growthRate = 4.0f;
+        float initialAlpha = 0.8f;
+    };
+    static const uint32_t kMaxSmokeParticles = 300;
+    std::vector<SmokeParticle> smokeParticles_;
+    Microsoft::WRL::ComPtr<ID3D12Resource> smokeInstancingResource_;
+    ParticleForGPU* smokeInstancingData_ = nullptr;
+    D3D12_GPU_DESCRIPTOR_HANDLE smokeInstancingSrvHandleGPU_{};
+    void EmitCrashSmoke(const Vector3& pos, const Vector3& inheritedVel, bool isFireEmber = false);
 
     // ── 地形(Terrain)用 ──
     std::unique_ptr<Model> terrainModel_;

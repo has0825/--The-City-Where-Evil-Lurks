@@ -46,9 +46,19 @@ void GpuParticleManager::Update(const Matrix4x4& viewProjection, const Matrix4x4
 
     // Emitterの更新処理 (自動エミットは無効化)
     emitterData_->emit = 0;
+
+    if (activeTimer_ > 0.0f) {
+        activeTimer_ -= deltaTime;
+        if (activeTimer_ <= 0.0f) {
+            hasActiveParticles_ = false;
+        }
+    }
 }
 
 void GpuParticleManager::Emit() {
+    activeTimer_ = 4.0f;
+    hasActiveParticles_ = true;
+
     ID3D12GraphicsCommandList* commandList = DirectXCommon::GetInstance()->GetCommandList();
     GraphicsPipeline* graphicsPipeline = GraphicsPipeline::GetInstance();
 
@@ -87,6 +97,10 @@ void GpuParticleManager::TriggerEmit(const Vector3& position, uint32_t count) {
 }
 
 void GpuParticleManager::UpdateCS() {
+    if (!hasActiveParticles_) {
+        return;
+    }
+
     ID3D12GraphicsCommandList* commandList = DirectXCommon::GetInstance()->GetCommandList();
     GraphicsPipeline* graphicsPipeline = GraphicsPipeline::GetInstance();
 
@@ -113,6 +127,10 @@ void GpuParticleManager::UpdateCS() {
 }
 
 void GpuParticleManager::Draw(ID3D12GraphicsCommandList* commandList, D3D12_GPU_DESCRIPTOR_HANDLE textureHandle, D3D12_VERTEX_BUFFER_VIEW* vbView, D3D12_INDEX_BUFFER_VIEW* ibView) {
+    if (!hasActiveParticles_) {
+        return;
+    }
+
     // 描画前に UAV -> SRV へ遷移させる
     D3D12_RESOURCE_BARRIER transitionBarrier{};
     transitionBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;

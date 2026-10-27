@@ -1,8 +1,11 @@
 #include "Skybox.h"
 #include "D3D12Util.h"
 #include "MathUtil.h"
+#include <Windows.h>
 
 void Skybox::Initialize(ID3D12Device* device) {
+    if (!device) return;
+
     // 頂点データ (内側を向いた箱・36頂点)
     VertexPos vertices[36] = {
         // 右面
@@ -26,6 +29,10 @@ void Skybox::Initialize(ID3D12Device* device) {
     };
 
     vertexResource_ = CreateBufferResource(device, sizeof(vertices));
+    if (!vertexResource_) {
+        OutputDebugStringA("[Skybox ERROR] vertexResource_ is null. Device may be removed.\n");
+        return;
+    }
     VertexPos* vertexData = nullptr;
     vertexResource_->Map(0, nullptr, reinterpret_cast<void**>(&vertexData));
     memcpy(vertexData, vertices, sizeof(vertices));
@@ -37,11 +44,20 @@ void Skybox::Initialize(ID3D12Device* device) {
 
     // WVP用の定数バッファ作成
     constBuffer_ = CreateBufferResource(device, sizeof(Matrix4x4));
+    if (!constBuffer_) {
+        OutputDebugStringA("[Skybox ERROR] constBuffer_ is null.\n");
+        return;
+    }
     constBuffer_->Map(0, nullptr, reinterpret_cast<void**>(&constData_));
-    *constData_ = MakeIdentity4x4();
+    if (constData_) {
+        *constData_ = MakeIdentity4x4();
+    }
 }
 
 void Skybox::Draw(ID3D12GraphicsCommandList* commandList, const Matrix4x4& wvp, D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandle) {
+    if (!commandList || !constBuffer_ || !vertexResource_ || !constData_) {
+        return;
+    }
     *constData_ = wvp;
 
     commandList->IASetVertexBuffers(0, 1, &vertexBufferView_);

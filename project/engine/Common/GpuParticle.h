@@ -91,4 +91,6 @@ private:
     D3D12_GPU_DESCRIPTOR_HANDLE freeListUavHandleGPU_ = {};
 
     float time_ = 0.0f;
+    float activeTimer_ = 0.0f;
+    bool hasActiveParticles_ = false;
 };

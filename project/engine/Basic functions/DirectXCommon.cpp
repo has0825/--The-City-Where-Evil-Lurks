@@ -21,40 +21,22 @@ DirectXCommon* DirectXCommon::GetInstance() {
 }
 
 void DirectXCommon::Initialize(WinApp* winApp) {
+    winApp_ = winApp;
 #ifdef _DEBUG
     Microsoft::WRL::ComPtr<ID3D12Debug1> debugController = nullptr;
     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
         debugController->EnableDebugLayer();
-        debugController->SetEnableGPUBasedValidation(TRUE);
-    }
-#endif
-
-    CreateDevice();
-
 #ifdef _DEBUG
-    Microsoft::WRL::ComPtr<ID3D12InfoQueue> infoQueue = nullptr;
-    if (SUCCEEDED(device_->QueryInterface(IID_PPV_ARGS(&infoQueue)))) {
-        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, true);
-        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
-        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, false);
-        D3D12_MESSAGE_ID denyIds[] = {
-            D3D12_MESSAGE_ID_RESOURCE_BARRIER_MISMATCHING_COMMAND_LIST_TYPE
-        };
-        D3D12_MESSAGE_SEVERITY severities[] = { D3D12_MESSAGE_SEVERITY_INFO };
-        D3D12_INFO_QUEUE_FILTER filter{};
-        filter.DenyList.NumIDs = _countof(denyIds);
-        filter.DenyList.pIDList = denyIds;
-        filter.DenyList.NumSeverities = _countof(severities);
-        filter.DenyList.pSeverityList = severities;
-        infoQueue->PushStorageFilter(&filter);
+        // debugController->SetEnableGPUBasedValidation(TRUE); // GPU-Based Validationは描画負荷が極めて高くフレームレートが著しく低下するため無効化
+#endif
     }
+
 #endif
 
-    CreateCommandQueue();
-    CreateSwapChain(winApp);
-    CreateRenderTarget();
-    CreateDepthBuffer(winApp);
-    CreateFence();
+    HRESULT hr = CreateDXGIFactory(IID_PPV_ARGS(&dxgiFactory_));
+    assert(SUCCEEDED(hr));
+
+    InitializeWithAdapter(0);
 
     // ビューポートとシザー矩形の設定
     viewport_.Width = static_cast<float>(winApp->kClientWidth);
@@ -152,37 +134,112 @@ void DirectXCommon::PostDraw() {
     assert(SUCCEEDED(hr));
 }
 
-void DirectXCommon::CreateDevice() {
-    HRESULT hr = CreateDXGIFactory(IID_PPV_ARGS(&dxgiFactory_));
-    assert(SUCCEEDED(hr));
+void DirectXCommon::InitializeWithAdapter(UINT startAdapterIndex) {
+    // 既存のリソースがあれば一旦すべてリセット（フォールバック再初期化対応）
+    for (UINT i = 0; i < kBackBufferCount_; ++i) {
+        backBuffers_[i].Reset();
+    }
+    depthStencilResource_.Reset();
+    dsvDescriptorHeap_.Reset();
+    rtvDescriptorHeap_.Reset();
+    swapChain_.Reset();
+    commandList_.Reset();
+    commandAllocator_.Reset();
+    commandQueue_.Reset();
+    if (fenceEvent_) {
+        CloseHandle(fenceEvent_);
+        fenceEvent_ = nullptr;
+    }
+    fence_.Reset();
+    device_.Reset();
+    useAdapter_.Reset();
 
-    D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_12_2, D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0 };
+    CreateDevice(startAdapterIndex);
 
-    Microsoft::WRL::ComPtr<IDXGIAdapter4> useAdapter;
-    for (UINT i = 0; dxgiFactory_->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&useAdapter)) != DXGI_ERROR_NOT_FOUND; ++i) {
+    Microsoft::WRL::ComPtr<ID3D12InfoQueue> infoQueue = nullptr;
+    if (SUCCEEDED(device_->QueryInterface(IID_PPV_ARGS(&infoQueue)))) {
+#ifdef _DEBUG
+        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, true);
+        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
+        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, false);
+#endif
+        D3D12_MESSAGE_ID denyIds[] = {
+            D3D12_MESSAGE_ID_RESOURCE_BARRIER_MISMATCHING_COMMAND_LIST_TYPE
+        };
+        D3D12_MESSAGE_SEVERITY severities[] = { D3D12_MESSAGE_SEVERITY_INFO };
+        D3D12_INFO_QUEUE_FILTER filter{};
+        filter.DenyList.NumIDs = _countof(denyIds);
+        filter.DenyList.pIDList = denyIds;
+        filter.DenyList.NumSeverities = _countof(severities);
+        filter.DenyList.pSeverityList = severities;
+        infoQueue->PushStorageFilter(&filter);
+    }
+
+    CreateCommandQueue();
+    CreateSwapChain(winApp_);
+    CreateRenderTarget();
+    CreateDepthBuffer(winApp_);
+    CreateFence();
+}
+
+bool DirectXCommon::FallbackAdapterIfDeviceRemoved() {
+    if (!device_ || SUCCEEDED(device_->GetDeviceRemovedReason())) {
+        return false;
+    }
+    char buf[256];
+    sprintf_s(buf, "[DirectXCommon] Device was removed (reason=0x%08X) on adapter index %u! Reinitializing with fallback adapter...\n",
+        (UINT)device_->GetDeviceRemovedReason(), currentAdapterIndex_);
+    OutputDebugStringA(buf);
+
+    InitializeWithAdapter(currentAdapterIndex_ + 1);
+    return true;
+}
+
+void DirectXCommon::CreateDevice(UINT startAdapterIndex) {
+    HRESULT hr = S_OK;
+    D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0 };
+    const char* featureLevelNames[] = { "12.1", "12.0" };
+
+    for (UINT i = startAdapterIndex; dxgiFactory_->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&useAdapter_)) != DXGI_ERROR_NOT_FOUND; ++i) {
         DXGI_ADAPTER_DESC3 adapterDesc{};
-        hr = useAdapter->GetDesc3(&adapterDesc);
+        hr = useAdapter_->GetDesc3(&adapterDesc);
         assert(SUCCEEDED(hr));
         if (!(adapterDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+            std::string adapterName = ConvertString(adapterDesc.Description);
+            OutputDebugStringA(("[DirectXCommon] Trying Adapter [" + std::to_string(i) + "]: " + adapterName + "\n").c_str());
             for (size_t levelIndex = 0; levelIndex < _countof(featureLevels); ++levelIndex) {
-                hr = D3D12CreateDevice(useAdapter.Get(), featureLevels[levelIndex], IID_PPV_ARGS(&device_));
-                if (SUCCEEDED(hr)) {
-                    break;
+                hr = D3D12CreateDevice(useAdapter_.Get(), featureLevels[levelIndex], IID_PPV_ARGS(&device_));
+                if (SUCCEEDED(hr) && device_ != nullptr) {
+                    D3D12_DESCRIPTOR_HEAP_DESC testHeapDesc{};
+                    testHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+                    testHeapDesc.NumDescriptors = 1;
+                    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> testHeap;
+                    HRESULT testHr = device_->CreateDescriptorHeap(&testHeapDesc, IID_PPV_ARGS(&testHeap));
+                    if (SUCCEEDED(testHr) && SUCCEEDED(device_->GetDeviceRemovedReason())) {
+                        currentAdapterIndex_ = i;
+                        OutputDebugStringA(("[DirectXCommon] Selected Adapter [" + std::to_string(i) + "]: " + adapterName + " (FeatureLevel " + featureLevelNames[levelIndex] + ")\n").c_str());
+                        break;
+                    }
+                    OutputDebugStringA(("[DirectXCommon] Adapter failed verification, falling back: " + adapterName + "\n").c_str());
+                    device_.Reset();
                 }
             }
             if (device_ != nullptr) {
                 break;
             }
         }
+        useAdapter_.Reset();
     }
 
     // ハードウェアアダプタで作成できなかった場合はWARPアダプタにフォールバック
     if (device_ == nullptr) {
-        hr = dxgiFactory_->EnumWarpAdapter(IID_PPV_ARGS(&useAdapter));
+        hr = dxgiFactory_->EnumWarpAdapter(IID_PPV_ARGS(&useAdapter_));
         if (SUCCEEDED(hr)) {
             for (size_t levelIndex = 0; levelIndex < _countof(featureLevels); ++levelIndex) {
-                hr = D3D12CreateDevice(useAdapter.Get(), featureLevels[levelIndex], IID_PPV_ARGS(&device_));
+                hr = D3D12CreateDevice(useAdapter_.Get(), featureLevels[levelIndex], IID_PPV_ARGS(&device_));
                 if (SUCCEEDED(hr)) {
+                    currentAdapterIndex_ = 99;
+                    OutputDebugStringA("[DirectXCommon] Fallback to WARP Adapter\n");
                     break;
                 }
             }

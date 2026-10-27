@@ -1,4 +1,4 @@
-#include "Framework.h"
+﻿#include "Framework.h"
 #include "SrvManager.h"
 #include <dbghelp.h>
 #include <strsafe.h>
@@ -111,6 +111,12 @@ void Framework::Initialize() {
     graphicsPipeline_ = GraphicsPipeline::GetInstance();
     if (graphicsPipeline_) {
         graphicsPipeline_->Initialize(dxCommon_->GetDevice());
+        // PSO作成中などにアダプタがPnP停止（Device Removed）になった場合は別アダプタへフォールバックして再構築する
+        if (dxCommon_->FallbackAdapterIfDeviceRemoved()) {
+            SrvManager::GetInstance()->Initialize(dxCommon_);
+            graphicsPipeline_->Reset();
+            graphicsPipeline_->Initialize(dxCommon_->GetDevice());
+        }
     }
 
     // SRVヒープ作成
@@ -125,10 +131,12 @@ void Framework::Initialize() {
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
     ImGui_ImplWin32_Init(winApp_->GetHwnd());
-    ImGui_ImplDX12_Init(dxCommon_->GetDevice(), dxCommon_->GetBackBufferCount(),
-        DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, imguiDescriptorHeap_.Get(),
-        imguiDescriptorHeap_->GetCPUDescriptorHandleForHeapStart(),
-        imguiDescriptorHeap_->GetGPUDescriptorHandleForHeapStart());
+    if (imguiDescriptorHeap_) {
+        ImGui_ImplDX12_Init(dxCommon_->GetDevice(), dxCommon_->GetBackBufferCount(),
+            DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, imguiDescriptorHeap_.Get(),
+            imguiDescriptorHeap_->GetCPUDescriptorHandleForHeapStart(),
+            imguiDescriptorHeap_->GetGPUDescriptorHandleForHeapStart());
+    }
 #endif
 }
 

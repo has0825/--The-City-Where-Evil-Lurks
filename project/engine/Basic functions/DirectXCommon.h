@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl.h>
@@ -48,6 +48,9 @@ public:
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> CreateDescriptorHeap(
         D3D12_DESCRIPTOR_HEAP_TYPE type, UINT numDescriptors, bool shaderVisible);
 
+    // デバイスがロストしていた場合に別アダプタへフォールバック再初期化する
+    bool FallbackAdapterIfDeviceRemoved();
+
     void SetClearColor(float r, float g, float b, float a) {
         clearColor_[0] = r;
         clearColor_[1] = g;
@@ -61,7 +64,8 @@ private:
     DirectXCommon(const DirectXCommon&) = delete;
     const DirectXCommon& operator=(const DirectXCommon&) = delete;
 
-    void CreateDevice();
+    void InitializeWithAdapter(UINT startAdapterIndex);
+    void CreateDevice(UINT startAdapterIndex);
     void CreateCommandQueue();
     void CreateSwapChain(WinApp* winApp);
     void CreateRenderTarget();
@@ -69,7 +73,10 @@ private:
     void CreateFence();
 
 private:
+    WinApp* winApp_ = nullptr;
+    UINT currentAdapterIndex_ = 0;
     Microsoft::WRL::ComPtr<IDXGIFactory7> dxgiFactory_;
+    Microsoft::WRL::ComPtr<IDXGIAdapter4> useAdapter_;
     Microsoft::WRL::ComPtr<ID3D12Device> device_;
     Microsoft::WRL::ComPtr<ID3D12CommandQueue> commandQueue_;
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> commandAllocator_;

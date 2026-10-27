@@ -1,4 +1,4 @@
-#include "Model.h"
+﻿#include "Model.h"
 #include "DirectXCommon.h"
 #include <cassert>
 #include <cstring>
@@ -381,7 +381,7 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateDefaultBuffer(
         &defaultHeapProps,
         D3D12_HEAP_FLAG_NONE,
         &bufferDesc,
-        D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_COMMON,
         nullptr,
         IID_PPV_ARGS(&defaultBuffer));
     if (FAILED(hr) || !defaultBuffer) {

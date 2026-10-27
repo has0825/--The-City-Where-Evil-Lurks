@@ -1,7 +1,8 @@
 #include "D3D12Util.h"
 #include "DirectXCommon.h" // 追加
 #include <cassert>
-
+#include <Windows.h>
+#include <cstdio>
 
 // 外部で定義された関数のプロトタイプ宣言 (ConvertStringはまだmain.cppにあるため)
 std::wstring ConvertString(const std::string& str);
@@ -22,6 +23,10 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateBufferResource(ID3D12Device* device
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexResource = nullptr;
     HRESULT hr = device->CreateCommittedResource(&uploadHeapProperties, D3D12_HEAP_FLAG_NONE, &vertexResourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertexResource));
     if (FAILED(hr) || !vertexResource) {
+        char buf[256];
+        HRESULT reason = device->GetDeviceRemovedReason();
+        sprintf_s(buf, "[D3D12 ERROR] CreateBufferResource failed! hr=0x%08X, reason=0x%08X, size=%zu\n", (UINT)hr, (UINT)reason, sizeInBytes);
+        OutputDebugStringA(buf);
         return nullptr;
     }
     return vertexResource;
@@ -29,6 +34,7 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateBufferResource(ID3D12Device* device
 
 Microsoft::WRL::ComPtr<ID3D12Resource> CreateUAVBufferResource(ID3D12Device* device, size_t sizeInBytes)
 {
+    if (!device || sizeInBytes == 0) return nullptr;
     D3D12_HEAP_PROPERTIES heapProperties{};
     heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC resourceDesc{};
@@ -42,24 +48,38 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateUAVBufferResource(ID3D12Device* dev
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     Microsoft::WRL::ComPtr<ID3D12Resource> resource = nullptr;
     HRESULT hr = device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&resource));
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr) || !resource) {
+        char buf[256];
+        HRESULT reason = device->GetDeviceRemovedReason();
+        sprintf_s(buf, "[D3D12 ERROR] CreateUAVBufferResource failed! hr=0x%08X, reason=0x%08X, size=%zu\n", (UINT)hr, (UINT)reason, sizeInBytes);
+        OutputDebugStringA(buf);
+        return nullptr;
+    }
     return resource;
 }
 
 Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> CreateDescriptorHeap(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE heapType, UINT numDescriptors, bool shaderVisible)
 {
+    if (!device) return nullptr;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DescriptorHeap = nullptr;
     D3D12_DESCRIPTOR_HEAP_DESC DescriptorHeapDesc{};
     DescriptorHeapDesc.Type = heapType;
     DescriptorHeapDesc.NumDescriptors = numDescriptors;
     DescriptorHeapDesc.Flags = shaderVisible ? D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE : D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     HRESULT hr = device->CreateDescriptorHeap(&DescriptorHeapDesc, IID_PPV_ARGS(&DescriptorHeap));
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr) || !DescriptorHeap) {
+        char buf[256];
+        HRESULT reason = device->GetDeviceRemovedReason();
+        sprintf_s(buf, "[D3D12 ERROR] CreateDescriptorHeap failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
+        OutputDebugStringA(buf);
+        return nullptr;
+    }
     return DescriptorHeap;
 }
 
 Microsoft::WRL::ComPtr<ID3D12Resource> CreateTextureResource(ID3D12Device* device, const DirectX::TexMetadata& metadata)
 {
+    if (!device) return nullptr;
     D3D12_RESOURCE_DESC resourceDesc{};
     resourceDesc.Width = UINT(metadata.width);
     resourceDesc.Height = UINT(metadata.height);
@@ -72,12 +92,19 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateTextureResource(ID3D12Device* devic
     heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
     Microsoft::WRL::ComPtr<ID3D12Resource> resource = nullptr;
     HRESULT hr = device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&resource));
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr) || !resource) {
+        char buf[256];
+        HRESULT reason = device->GetDeviceRemovedReason();
+        sprintf_s(buf, "[D3D12 ERROR] CreateTextureResource failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
+        OutputDebugStringA(buf);
+        return nullptr;
+    }
     return resource;
 }
 
 Microsoft::WRL::ComPtr<ID3D12Resource> CreateDepthStencilTextureResource(ID3D12Device* device, int32_t width, int32_t height)
 {
+    if (!device) return nullptr;
     D3D12_RESOURCE_DESC resourceDesc{};
     resourceDesc.Width = width;
     resourceDesc.Height = height;
@@ -94,12 +121,19 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateDepthStencilTextureResource(ID3D12D
     depthClearValue.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
     Microsoft::WRL::ComPtr<ID3D12Resource> resource = nullptr;
     HRESULT hr = device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClearValue, IID_PPV_ARGS(&resource));
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr) || !resource) {
+        char buf[256];
+        HRESULT reason = device->GetDeviceRemovedReason();
+        sprintf_s(buf, "[D3D12 ERROR] CreateDepthStencilTextureResource failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
+        OutputDebugStringA(buf);
+        return nullptr;
+    }
     return resource;
 }
 
 Microsoft::WRL::ComPtr<ID3D12Resource> CreateRenderTextureResource(ID3D12Device* device, uint32_t width, uint32_t height, DXGI_FORMAT format, const Vector4& clearColor)
 {
+    if (!device) return nullptr;
     D3D12_RESOURCE_DESC resourceDesc{};
     resourceDesc.Width = width;
     resourceDesc.Height = height;
@@ -128,23 +162,60 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateRenderTextureResource(ID3D12Device*
         D3D12_RESOURCE_STATE_RENDER_TARGET,
         &clearValue,
         IID_PPV_ARGS(&resource));
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr) || !resource) {
+        char buf[256];
+        HRESULT reason = device->GetDeviceRemovedReason();
+        sprintf_s(buf, "[D3D12 ERROR] CreateRenderTextureResource failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
+        OutputDebugStringA(buf);
+        return nullptr;
+    }
 
     return resource;
 }
 
 Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(ID3D12Resource* texture, const DirectX::ScratchImage& mipImages, ID3D12Device* device, ID3D12GraphicsCommandList* /*commandList*/)
 {
+    if (!texture || !device) {
+        OutputDebugStringA("[D3D12 ERROR] UploadTextureData: texture or device is null!\n");
+        return nullptr;
+    }
+
     std::vector<D3D12_SUBRESOURCE_DATA> subresources;
-    DirectX::PrepareUpload(device, mipImages.GetImages(), mipImages.GetImageCount(), mipImages.GetMetadata(), subresources);
+    HRESULT hr = DirectX::PrepareUpload(device, mipImages.GetImages(), mipImages.GetImageCount(), mipImages.GetMetadata(), subresources);
+    if (FAILED(hr)) {
+        char buf[256];
+        sprintf_s(buf, "[D3D12 ERROR] PrepareUpload failed! hr=0x%08X\n", (UINT)hr);
+        OutputDebugStringA(buf);
+        return nullptr;
+    }
+
     uint64_t intermediateSize = GetRequiredIntermediateSize(texture, 0, static_cast<UINT>(subresources.size()));
     Microsoft::WRL::ComPtr<ID3D12Resource> intermediate = CreateBufferResource(device, intermediateSize);
+    if (!intermediate) {
+        OutputDebugStringA("[D3D12 ERROR] UploadTextureData: Failed to create intermediate upload buffer!\n");
+        return nullptr;
+    }
 
     // 一時的なコマンドリストとアロケータを作成して実行する
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> tempAllocator;
-    device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tempAllocator));
+    hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tempAllocator));
+    if (FAILED(hr) || !tempAllocator) {
+        char buf[256];
+        HRESULT reason = device->GetDeviceRemovedReason();
+        sprintf_s(buf, "[D3D12 ERROR] CreateCommandAllocator failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
+        OutputDebugStringA(buf);
+        return nullptr;
+    }
+
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> tempCommandList;
-    device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tempAllocator.Get(), nullptr, IID_PPV_ARGS(&tempCommandList));
+    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tempAllocator.Get(), nullptr, IID_PPV_ARGS(&tempCommandList));
+    if (FAILED(hr) || !tempCommandList) {
+        char buf[256];
+        HRESULT reason = device->GetDeviceRemovedReason();
+        sprintf_s(buf, "[D3D12 ERROR] CreateCommandList failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
+        OutputDebugStringA(buf);
+        return nullptr;
+    }
 
     UpdateSubresources(tempCommandList.Get(), texture, intermediate.Get(), 0, 0, static_cast<UINT>(subresources.size()), subresources.data());
 
@@ -160,33 +231,45 @@ Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(ID3D12Resource* texture
 
     // 実行用キューの取得 (シングルトン経由)
     ID3D12CommandQueue* commandQueue = DirectXCommon::GetInstance()->GetCommandQueue();
+    if (!commandQueue) {
+        return intermediate;
+    }
+
     ID3D12CommandList* commandLists[] = { tempCommandList.Get() };
     commandQueue->ExecuteCommandLists(1, commandLists);
 
     // 完了待機
     Microsoft::WRL::ComPtr<ID3D12Fence> fence;
     device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
-    HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    commandQueue->Signal(fence.Get(), 1);
-    if (fence->GetCompletedValue() < 1) {
-        fence->SetEventOnCompletion(1, fenceEvent);
-        WaitForSingleObject(fenceEvent, INFINITE);
+    if (fence) {
+        HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+        commandQueue->Signal(fence.Get(), 1);
+        if (fence->GetCompletedValue() < 1) {
+            fence->SetEventOnCompletion(1, fenceEvent);
+            WaitForSingleObject(fenceEvent, INFINITE);
+        }
+        CloseHandle(fenceEvent);
     }
-    CloseHandle(fenceEvent);
 
     return intermediate;
 }
-
 
 DirectX::ScratchImage LoadTexture(const std::string& filePath)
 {
     DirectX::ScratchImage image{};
     std::wstring filePathW = ConvertString(filePath);
     HRESULT hr = DirectX::LoadFromWICFile(filePathW.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, nullptr, image);
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr)) {
+        char buf[512];
+        sprintf_s(buf, "[D3D12 ERROR] LoadTexture: LoadFromWICFile failed for %s (hr=0x%08X)\n", filePath.c_str(), (UINT)hr);
+        OutputDebugStringA(buf);
+        return image;
+    }
     DirectX::ScratchImage mipImages{};
     hr = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::TEX_FILTER_SRGB, 0, mipImages);
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr)) {
+        return image;
+    }
     return mipImages;
 }
 

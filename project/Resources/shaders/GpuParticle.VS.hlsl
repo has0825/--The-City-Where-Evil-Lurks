@@ -29,6 +29,14 @@ struct VertexShaderOutput {
 VertexShaderOutput main(VertexShaderInput input, uint instanceId : SV_InstanceID) {
     VertexShaderOutput output;
     Particle particle = gParticles[instanceId];
+
+    // 非生存または不可視のパーティクルはクリップ空間外に配置してGPUラスタライズを即時スキップ
+    if (particle.color.a <= 0.0f || particle.scale.x <= 0.0001f || particle.currentTime >= particle.lifeTime) {
+        output.position = float4(2.0f, 2.0f, 2.0f, 1.0f);
+        output.texcoord = float2(0.0f, 0.0f);
+        output.color = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return output;
+    }
     
     // ビルボード行列をベースにWorld行列を構築
     float4x4 worldMatrix = gPerView.billboardMatrix;
