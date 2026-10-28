@@ -422,7 +422,7 @@ private:
     // 描画最適化・距離カリング用定数
     static constexpr float kBuildingCullBackDist = 120.0f;   // カメラ後方カリング距離
     static constexpr float kBuildingCullFarDist  = 1800.0f;  // カメラ前方カリング距離
-    static constexpr float kBuildingDetailDist   = 250.0f;   // 各階個別に詳細描画する近距離閾値（これより遠いビルは1棟1ドローコール化）
+    static constexpr float kBuildingDetailDist   = 300.0f;   // 各階個別に詳細描画する近距離閾値（これより遠いビルは1棟1ドローコール化）
     static constexpr float kFloorCullBackDist    = 120.0f;   // 床タイルカメラ後方カリング距離
     static constexpr float kFloorCullFarDist     = 2200.0f;  // 床タイルカメラ前方カリング距離
 
@@ -506,7 +506,7 @@ private:
     // フェーズ管理用
     GamePhase currentPhase_ = GamePhase::kPhase1; // 初期値フェーズ1スタート
     float phaseTimer_ = 0.0f;
-    static constexpr float kPhaseDuration = 15.0f; // 1フェーズ15秒に短縮
+    static constexpr float kPhaseDuration = 4.0f; // 1フェーズ4秒に短縮（超テンポよく進行）
 
     // フェーズ表示演出（高速ブースト＆ソニックブーム演出）用メンバ変数
     static constexpr float kPhaseIntroDuration = 2.4f;
@@ -533,6 +533,7 @@ private:
 
     // ボス登場WARNING演出用スプライト・タイマー
     std::unique_ptr<Sprite> warningTextSprite_;
+    std::unique_ptr<Sprite> warningGhostSprites_[2]; // PHASE演出風WARNINGの残像・分割用スプライト
     std::unique_ptr<Sprite> warningTapeTopSprite_;
     std::unique_ptr<Sprite> warningTapeBottomSprite_;
     std::unique_ptr<Sprite> warningFrameSprite_;

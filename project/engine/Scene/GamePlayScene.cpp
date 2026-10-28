@@ -1,4 +1,4 @@
-#include "GamePlayScene.h"
+﻿#include "GamePlayScene.h"
 #include "WinApp.h"
 #include "SceneManager.h"
 #include "LoadingScreen.h"
@@ -1531,6 +1531,9 @@ void GamePlayScene::Initialize() {
     TextureManager::GetInstance()->LoadTexture("number/big2.png");
     TextureManager::GetInstance()->LoadTexture("circle2.png");
     warningTextSprite_ = Sprite::Create("warning_text.png", { 0.0f, 0.0f });
+    for (int i = 0; i < 2; ++i) {
+        warningGhostSprites_[i] = Sprite::Create("warning_text.png", { 0.0f, 0.0f });
+    }
     warningTapeTopSprite_ = Sprite::Create("warning_tape_single.png", { 0.0f, 0.0f });
     warningTapeBottomSprite_ = Sprite::Create("warning_tape_single.png", { 0.0f, 0.0f });
     warningRedOverlaySprite_ = Sprite::Create("human/white.png", { 0.0f, 0.0f });
@@ -2773,7 +2776,8 @@ void GamePlayScene::Update() {
         // --- 戦闘機（レールシューター）モード ---
 
         // ── ブースト処理（LSHIFTで発動、バレルロール終了と同時に自動で戻る） ────────────────
-        if (input_->IsKeyTriggered(DIK_LSHIFT) && !(phaseIntroTimer_ >= 0.0f) && !isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
+        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
+        if (input_->IsKeyTriggered(DIK_LSHIFT) && !(phaseIntroTimer_ >= 0.0f) && !isBossIntro && !isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
             if (!isBarrelRolling_) {
                 isBoosting_ = true;
                 isBarrelRolling_ = true;
@@ -2832,7 +2836,6 @@ void GamePlayScene::Update() {
         }
 
         // ── 1. プレイヤーのワールドZ座標を自律前進（フェーズ演出中も前進・疾走感を維持） ──────────────────
-        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
         if (!isWaitingForTransition && !isBossIntro && !isBossDefeatedSequence_) {
             if (isPlayerDead_) {
                 if (!hasCrashExploded_) {
@@ -2882,11 +2885,11 @@ void GamePlayScene::Update() {
         // ── 3. 自機の横/縦移動（画面内相対）─────────────────────────
         if (fighterModel_) {
             Vector3 inputDir = {0,0,0};
-            if (phaseIntroTimer_ >= 0.0f && !isTitleMode_) {
-                // フェーズ演出中は自機を画面中央へ滑らかにセンタリングして見栄えを良くする
+            if ((phaseIntroTimer_ >= 0.0f || isBossIntro) && !isTitleMode_) {
+                // フェーズ演出中およびボス登場演出中は自機を画面中央へ滑らかにセンタリング固定（操作無効）
                 fighterModel_->transform.translate.x = std::lerp(fighterModel_->transform.translate.x, 0.0f, 0.12f);
                 fighterModel_->transform.translate.y = std::lerp(fighterModel_->transform.translate.y, 0.0f, 0.12f);
-            } else if (!isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_ && !isPlayerDead_) {
+            } else if (!isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_ && !isPlayerDead_ && !isBossIntro) {
                 if (input_->IsKeyPressed(DIK_W)) inputDir.y += 1.0f;
                 if (input_->IsKeyPressed(DIK_S)) inputDir.y -= 1.0f;
                 if (input_->IsKeyPressed(DIK_A)) inputDir.x -= 1.0f;
@@ -3204,6 +3207,7 @@ void GamePlayScene::Update() {
             // ── 5. 機体の傾き（通常ロール/ピッチ + バレルロール合成） ──
             float baseRoll  = inputDir.x * -kMaxRollAngle;
             float basePitch = inputDir.y * 0.4f;
+            if (isBossIntro) { baseRoll = 0.0f; basePitch = 0.0f; }
             if (phaseIntroTimer_ >= 0.0f && !isTitleMode_) {
                 // フェーズ演出中のソニックブーム加速に伴う軽やかな上昇ピッチ演出
                 float pt = phaseIntroTimer_;
@@ -3302,7 +3306,9 @@ void GamePlayScene::Update() {
 
             // ── ボス登場演出中のカメラワーク上書き ──
             if (!isBossDefeatedSequence_ && currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f) {
-                float t = 5.0f - bossAppearanceTimer_; // 0.0f から 5.0f
+                float total_t = 7.5f - bossAppearanceTimer_; // 0.0f から 7.5f
+                if (total_t >= 2.5f) {
+                    float t = total_t - 2.5f; // 0.0f から 5.0f
                 
                 // ボスの落下オフセット（1.8秒で着地）
                 float dropOffset = 0.0f;
@@ -3456,6 +3462,7 @@ void GamePlayScene::Update() {
                 camTrans.translate = camPos;
                 if (t >= 4.0f) {
                     camTrans.rotate = camRot;
+                }
                 }
             }
 
@@ -3715,7 +3722,6 @@ void GamePlayScene::Update() {
             Vector3 reticlePos = aimReticlePos_;
 
             // ボス登場演出中・撃墜墜落中は射撃を禁止
-            bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
             if (input_->IsKeyTriggered(DIK_SPACE) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_ && !isPlayerDead_) {
                 // 翼の発射位置をレールのright/up方向で計算
                 Vector3 leftWing  = Add(fighterWorldPos, Add(Scale(playerRailRight, -2.5f), Scale(playerRailUp, 0.8f)));
@@ -4366,11 +4372,11 @@ void GamePlayScene::Update() {
         // 落下登場演出時のオフセット (最初の1.5秒間は画面外上空に待機、1.5秒〜3.3秒で落下)
         float dropOffset = 0.0f;
         if (bossAppearanceTimer_ > 0.0f) {
-            float t = 6.5f - bossAppearanceTimer_;
-            if (t < 1.5f) {
+            float total_t = 7.5f - bossAppearanceTimer_;
+            if (total_t < 2.5f) {
                 dropOffset = 180.0f;
-            } else if (t < 3.3f) {
-                float appRate = (t - 1.5f) / 1.8f;
+            } else if (total_t < 4.3f) {
+                float appRate = (total_t - 2.5f) / 1.8f;
                 dropOffset = 120.0f * (1.0f - appRate) * (1.0f - appRate);
             }
         }
@@ -4432,9 +4438,9 @@ void GamePlayScene::Update() {
 
         // ボス咆哮時の姿勢（4.0秒から5.0秒の咆哮フェーズで上を向いて吠えるポーズと微振動を適用）
         if (bossAppearanceTimer_ > 0.0f) {
-            float t = 5.0f - bossAppearanceTimer_;
-            if (t >= 4.0f && t < 5.0f) {
-                float roarProgress = (t - 4.0f) / 1.0f;
+            float total_t = 7.5f - bossAppearanceTimer_;
+            if (total_t >= 6.0f && total_t < 7.5f) {
+                float roarProgress = (total_t - 6.0f) / 1.5f;
                 float easeRoar = std::sin(roarProgress * static_cast<float>(M_PI)); // 0 -> 1 -> 0
 
                 // 咆哮で天を仰ぐのけぞり (X軸回転、最大 -0.5ラジアン)
@@ -4446,10 +4452,10 @@ void GamePlayScene::Update() {
 
                 // 咆哮の全身超激震 (高周波激震)
                 float shakeFreq = 65.0f;
-                bossRotate.y += std::sin(t * shakeFreq) * 0.08f;
-                bossRotate.z += std::cos(t * shakeFreq) * 0.08f;
-                bossPos.y += std::sin(t * shakeFreq) * 0.45f;
-                bossPos.z += std::cos(t * shakeFreq) * 0.30f;
+                bossRotate.y += std::sin(total_t * shakeFreq) * 0.08f;
+                bossRotate.z += std::cos(total_t * shakeFreq) * 0.08f;
+                bossPos.y += std::sin(total_t * shakeFreq) * 0.45f;
+                bossPos.z += std::cos(total_t * shakeFreq) * 0.30f;
             }
         }
 
@@ -4582,14 +4588,14 @@ void GamePlayScene::Update() {
 
                 // 咆哮演出中 (4.0s ～ 5.0s) の前脚威嚇モーション
                 if (bossAppearanceTimer_ > 0.0f) {
-                    float t_appearance = 5.0f - bossAppearanceTimer_;
-                    if (t_appearance >= 4.0f && t_appearance < 5.0f) {
-                        float roarProgress = (t_appearance - 4.0f) / 1.0f;
+                    float total_t = 7.5f - bossAppearanceTimer_;
+                    if (total_t >= 6.0f && total_t < 7.5f) {
+                        float roarProgress = (total_t - 6.0f) / 1.5f;
                         float easeRoar = std::sin(roarProgress * static_cast<float>(M_PI));
 
                         if (i == 0 || i == 1) { // 左側の前脚
                             currentPitch = std::lerp(normalPitch, 1.5f, easeRoar);
-                            currentRotY += std::sin(t_appearance * 80.0f) * 0.15f * easeRoar; // ガタガタ動かす
+                            currentRotY += std::sin(total_t * 80.0f) * 0.15f * easeRoar; // ガタガタ動かす
                         } else {
                             // 後ろ脚：踏みしめる
                             currentPitch = std::lerp(normalPitch, -0.4f, easeRoar);
@@ -4673,15 +4679,15 @@ void GamePlayScene::Update() {
 
                 // 咆哮演出中 (4.0s ～ 5.0s) の前脚威嚇モーション
                 if (bossAppearanceTimer_ > 0.0f) {
-                    float t_appearance = 5.0f - bossAppearanceTimer_;
-                    if (t_appearance >= 4.0f && t_appearance < 5.0f) {
-                        float roarProgress = (t_appearance - 4.0f) / 1.0f;
+                    float total_t = 7.5f - bossAppearanceTimer_;
+                    if (total_t >= 6.0f && total_t < 7.5f) {
+                        float roarProgress = (total_t - 6.0f) / 1.5f;
                         float easeRoar = std::sin(roarProgress * static_cast<float>(M_PI));
 
                         if (i == 4 || i == 5) { // 右側の前脚
                             // 前脚：天高く持ち上げる ＆ 小刻みに震わせる (右足なのでマイナス方向)
                             currentPitch = std::lerp(normalPitch, -1.5f, easeRoar);
-                            currentRotY += std::sin(t_appearance * 80.0f) * 0.15f * easeRoar;
+                            currentRotY += std::sin(total_t * 80.0f) * 0.15f * easeRoar;
                         } else {
                             // 後ろ脚：踏みしめる
                             currentPitch = std::lerp(normalPitch, 0.4f, easeRoar);
@@ -5433,6 +5439,9 @@ void GamePlayScene::Update() {
                             }
                         }
                     }
+
+                    // 完全に透明なビルは描画自体をスキップ（ドローコール削減）
+                    if (alpha <= 0.01f) { buildings_[i].cbIndexStart = -1; continue; }
 
                     // ワールド行列の初期化キャッシュ（破壊されていない静的ビル用）
                     if (!buildings_[i].isWorldMatrixCached || (int)buildings_[i].cachedDetailWorldMatrices.size() != buildings_[i].floors) {
@@ -6194,7 +6203,7 @@ void GamePlayScene::Draw() {
         }
         
         // エイミング(レティクル)の描画 (ボス登場演出中、画面外からの突入配置中、および撃墜墜落中は非表示)
-        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
+        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
         bool hideReticleForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
         if (!isBossIntro && !isTitleMode_ && !hideReticleForTransition && !isPlayerDead_ && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
@@ -6590,7 +6599,7 @@ void GamePlayScene::Draw() {
                 }
             }
 
-            // ── ボス登場前の純粋なWARNING予告演出描画 (最初の2.5秒間のみ表示。ボス演出とは完全に分離) ──
+            // ── ボス登場前のWARNING予告演出描画 (最初の2.5秒間。PHASE演出スタイルのサイバーバイザー＆スラッシュ演出) ──
             if (bossAppearanceTimer_ > 0.0f && !isTitleMode_) {
                 float t = 7.5f - bossAppearanceTimer_; // 0.0s ～ 7.5s
 
@@ -6598,6 +6607,8 @@ void GamePlayScene::Draw() {
                 if (t < 2.5f) {
                     float halfClientW = (float)WinApp::kClientWidth / 2.0f;
                     float halfClientH = (float)WinApp::kClientHeight / 2.0f;
+                    float clientW = (float)WinApp::kClientWidth;
+                    float clientH = (float)WinApp::kClientHeight;
                     Matrix4x4 projectionSprite = MakeOrthographicMatrix(-halfClientW, halfClientH, halfClientW, -halfClientH, 0.0f, 100.0f);
                     Matrix4x4 viewProjSprite = Multiply(MakeIdentity4x4(), projectionSprite);
 
@@ -6605,63 +6616,247 @@ void GamePlayScene::Draw() {
                         commandList->SetGraphicsRootSignature(graphicsPipeline_->GetSpriteRootSignature());
                         commandList->SetPipelineState(graphicsPipeline_->GetSpritePipelineState());
 
-                        // 2.0秒～2.5秒の0.5秒間でフェードアウト
-                        float fadeAlpha = (t >= 2.0f) ? (std::max)(0.0f, (2.5f - t) / 0.5f) : 1.0f;
+                        // 中心基準＆任意のZ回転でスプライトを描画するヘルパーラムダ
+                        auto drawCenteredSprite = [&](Sprite* spr, float cx, float cy, float w, float h, float rotZ, const Vector4& col) {
+                            if (!spr || w <= 0.1f || h <= 0.1f || col.w <= 0.001f) return;
+                            float sx = w;
+                            float sy = -h; // 正射影(+Yが上)での上下反転補正
+                            float cosR = std::cos(rotZ);
+                            float sinR = std::sin(rotZ);
+                            spr->transform.scale = { sx, sy, 1.0f };
+                            spr->transform.rotate = { 0.0f, 0.0f, rotZ };
+                            spr->transform.translate = {
+                                cx - (0.5f * sx * cosR + 0.5f * sy * sinR),
+                                cy - (-0.5f * sx * sinR + 0.5f * sy * cosR),
+                                0.0f
+                            };
+                            spr->SetColor(col);
+                            spr->Draw(commandList, viewProjSprite);
+                        };
 
-                        // 上下警戒枠のスライドインイージング (最初の0.3秒間)
-                        float slideIn = (t < 0.3f) ? (t / 0.3f) : 1.0f;
-                        slideIn = std::sin(slideIn * static_cast<float>(M_PI) * 0.5f); // 0 -> 1
+                        // WARNING専用テーマカラー: 深紅（クリムゾン）＆ 警告アンバーオレンジ
+                        Vector3 themePrimary = { 1.0f, 0.08f, 0.12f };
+                        Vector3 themeAccent  = { 1.0f, 0.55f, 0.12f };
 
-                        // ① 画面全体の薄い赤色背景（パルス明滅）
+                        // 帯の開閉率 (0.0s〜0.30sで展開、1.75s以降左右スライド＆フェードで消去)
+                        float barOpen = 1.0f;
+                        float exitFade = 1.0f;
+                        float exitSplitX = 0.0f;
+                        if (t < 0.30f) {
+                            float u = t / 0.30f;
+                            barOpen = 1.0f - (1.0f - u) * (1.0f - u);
+                        } else if (t >= 1.75f) {
+                            float u = std::clamp((t - 1.75f) / (2.45f - 1.75f), 0.0f, 1.0f);
+                            exitFade = std::clamp(1.0f - std::pow(u, 1.45f), 0.0f, 1.0f);
+                            exitSplitX = 580.0f * (0.40f * u + 0.60f * u * u);
+                        }
+
+                        // ① 全画面の薄い赤色パルスオーバーレイ（警戒感アップ）
                         if (warningRedOverlaySprite_) {
-                            float redPulse = 0.25f + 0.15f * std::sin(warningScrollOffset_ * 12.0f);
-                            warningRedOverlaySprite_->transform.translate = { -halfClientW, halfClientH, 0.0f };
-                            warningRedOverlaySprite_->transform.scale = { (float)WinApp::kClientWidth, -(float)WinApp::kClientHeight, 1.0f };
-                            warningRedOverlaySprite_->SetColor({ 1.0f, 0.02f, 0.02f, redPulse * fadeAlpha });
-                            warningRedOverlaySprite_->Draw(commandList, viewProjSprite);
+                            float redPulse = 0.28f + 0.16f * std::sin(warningScrollOffset_ * 14.0f);
+                            drawCenteredSprite(warningRedOverlaySprite_.get(), 0.0f, 0.0f, clientW, clientH, 0.0f, { 1.0f, 0.02f, 0.02f, redPulse * exitFade });
                         }
 
-                        // ② 上下の黄色＆黒ストライプバー（左右動くアニメーション）
-                        if (warningTapeTopSprite_ && warningTapeBottomSprite_) {
-                            float tapeHeight = 65.0f * slideIn;
-                            float tapeWidth = 640.0f;
-                            float scrollSpeed = 500.0f; // 高速連続スクロール
+                        // ② 上下シネマティック・レターボックス帯 ＆ 上下警戒テープ
+                        float letterboxH = 75.0f * barOpen * exitFade;
+                        if (letterboxH > 0.5f) {
+                            // レターボックス黒帯
+                            drawCenteredSprite(phaseIntroBandSprites_[3].get(), 0.0f,  halfClientH - letterboxH * 0.5f, clientW + 40.0f, letterboxH, 0.0f, { 0.02f, 0.01f, 0.03f, 0.92f * barOpen * exitFade });
+                            drawCenteredSprite(phaseIntroBandSprites_[4].get(), 0.0f, -halfClientH + letterboxH * 0.5f, clientW + 40.0f, letterboxH, 0.0f, { 0.02f, 0.01f, 0.03f, 0.92f * barOpen * exitFade });
+                            // ネオンレッドエッジライン
+                            drawCenteredSprite(phaseIntroStreakSprites_[6].get(), 0.0f,  halfClientH - letterboxH, clientW + 40.0f, 4.0f, 0.0f, { themePrimary.x, themePrimary.y, themePrimary.z, 0.95f * barOpen * exitFade });
+                            drawCenteredSprite(phaseIntroStreakSprites_[7].get(), 0.0f, -halfClientH + letterboxH, clientW + 40.0f, 4.0f, 0.0f, { themePrimary.x, themePrimary.y, themePrimary.z, 0.95f * barOpen * exitFade });
 
-                            float topOffset = std::fmod(warningScrollOffset_ * scrollSpeed, tapeWidth);
-                            float bottomOffset = -std::fmod(warningScrollOffset_ * scrollSpeed, tapeWidth);
+                            // 上下警戒テープ（黄色と黒のストライプテープ）
+                            if (warningTapeTopSprite_ && warningTapeBottomSprite_) {
+                                float tapeH = 50.0f * barOpen * exitFade;
+                                float tapeW = 640.0f;
+                                float scrollSpeed = 500.0f;
+                                float topOffset = std::fmod(warningScrollOffset_ * scrollSpeed, tapeW);
+                                float bottomOffset = -std::fmod(warningScrollOffset_ * scrollSpeed, tapeW);
 
-                            // 上部バー (右へスルスル移動)
-                            warningTapeTopSprite_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f * fadeAlpha });
-                            for (float x = -halfClientW - tapeWidth + topOffset; x < halfClientW + tapeWidth; x += tapeWidth) {
-                                warningTapeTopSprite_->transform.translate = { x, halfClientH, 0.0f };
-                                warningTapeTopSprite_->transform.scale = { tapeWidth, -tapeHeight, 1.0f };
-                                warningTapeTopSprite_->Draw(commandList, viewProjSprite);
-                            }
-
-                            // 下部バー (左へスルスル移動)
-                            warningTapeBottomSprite_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f * fadeAlpha });
-                            for (float x = -halfClientW - tapeWidth + bottomOffset; x < halfClientW + tapeWidth; x += tapeWidth) {
-                                warningTapeBottomSprite_->transform.translate = { x, -halfClientH + tapeHeight, 0.0f };
-                                warningTapeBottomSprite_->transform.scale = { tapeWidth, -tapeHeight, 1.0f };
-                                warningTapeBottomSprite_->Draw(commandList, viewProjSprite);
+                                for (float x = -halfClientW - tapeW + topOffset; x < halfClientW + tapeW; x += tapeW) {
+                                    drawCenteredSprite(warningTapeTopSprite_.get(), x + tapeW * 0.5f, halfClientH - letterboxH * 0.5f, tapeW, tapeH, 0.0f, { 1.0f, 1.0f, 1.0f, 1.0f * barOpen * exitFade });
+                                }
+                                for (float x = -halfClientW - tapeW + bottomOffset; x < halfClientW + tapeW; x += tapeW) {
+                                    drawCenteredSprite(warningTapeBottomSprite_.get(), x + tapeW * 0.5f, -halfClientH + letterboxH * 0.5f, tapeW, tapeH, 0.0f, { 1.0f, 1.0f, 1.0f, 1.0f * barOpen * exitFade });
+                                }
                             }
                         }
 
-                        // ③ 画面中央の「WARNING」ロゴ（ドカンと拡大ズームイン・パルス点滅）
+                        // ③ 中央タクティカル・サイバーバイザー帯（-1.8度傾斜）
+                        float visorTilt = -0.032f; // 約 -1.8度
+                        float visorH = 175.0f * barOpen;
+                        if (t >= 0.42f && t < 0.58f) {
+                            float impactBump = 1.0f - (t - 0.42f) / 0.16f;
+                            visorH += 40.0f * impactBump * impactBump;
+                        }
+                        drawCenteredSprite(phaseIntroBandSprites_[0].get(), 0.0f, 0.0f, clientW + 120.0f, (std::max)(2.0f, visorH), visorTilt, { 0.08f, 0.01f, 0.02f, 0.78f * barOpen * exitFade });
+
+                        // バイザー上下のレーザーレール（スライドイン＆スプリット）
+                        float railSlide = (t < 0.35f) ? (1.0f - std::pow(1.0f - t / 0.35f, 3.0f)) : 1.0f;
+                        float railOffsetX = (1.0f - railSlide) * 900.0f + exitSplitX;
+                        float halfVisorH = visorH * 0.5f;
+                        drawCenteredSprite(phaseIntroBandSprites_[1].get(), -railOffsetX,  halfVisorH, clientW + 120.0f, 5.0f, visorTilt, { themeAccent.x, themeAccent.y, themeAccent.z, 0.95f * barOpen * exitFade });
+                        drawCenteredSprite(phaseIntroBandSprites_[2].get(),  railOffsetX, -halfVisorH, clientW + 120.0f, 5.0f, visorTilt, { themePrimary.x, themePrimary.y, themePrimary.z, 0.95f * barOpen * exitFade });
+
+                        // ④ バイザー内を走る警告スピードストリーク ＆ 左右の回転サイバーダイヤモンド
+                        const float streakOffsetsY[4] = { 50.0f, -38.0f, 20.0f, -60.0f };
+                        const float streakWidths[4]   = { 450.0f, 560.0f, 340.0f, 500.0f };
+                        const float streakSpeeds[4]   = { 2600.0f, -2900.0f, 3300.0f, -2400.0f };
+                        for (int i = 0; i < 4; ++i) {
+                            float travel = std::fmod(t * streakSpeeds[i] + i * 370.0f, clientW + 600.0f);
+                            float sx = (streakSpeeds[i] > 0.0f) ? (-halfClientW - 300.0f + travel) : (halfClientW + 300.0f - travel);
+                            float sy = streakOffsetsY[i] * barOpen + sx * std::tan(-visorTilt);
+                            Vector3 sCol = (i % 2 == 0) ? themeAccent : themePrimary;
+                            drawCenteredSprite(phaseIntroStreakSprites_[i].get(), sx, sy, streakWidths[i], 3.5f, visorTilt, { sCol.x, sCol.y, sCol.z, 0.70f * barOpen * exitFade });
+                        }
+
+                        // 左右の回転サイバーダイヤモンド
+                        if (barOpen * exitFade > 0.05f) {
+                            float diaRot = static_cast<float>(M_PI) * 0.25f + t * 5.0f;
+                            float diaScale = 25.0f * barOpen * (1.0f + 0.18f * std::sin(t * 20.0f));
+                            float diaOffsetX = 430.0f + (1.0f - barOpen) * 180.0f + exitSplitX;
+                            drawCenteredSprite(phaseIntroStreakSprites_[4].get(), -diaOffsetX, -diaOffsetX * std::tan(-visorTilt), diaScale, diaScale, diaRot, { themeAccent.x, themeAccent.y, themeAccent.z, 0.90f * barOpen * exitFade });
+                            drawCenteredSprite(phaseIntroStreakSprites_[5].get(),  diaOffsetX,  diaOffsetX * std::tan(-visorTilt), diaScale, diaScale, -diaRot, { themeAccent.x, themeAccent.y, themeAccent.z, 0.90f * barOpen * exitFade });
+                        }
+
+                        // ⑤ 「WARNING」ロゴ本体＆残像オーラスプライトの計算・描画
                         if (warningTextSprite_) {
-                            float pulseScale = 0.96f + 0.08f * std::sin(warningScrollOffset_ * 14.0f);
-                            float zoom = (t < 0.25f) ? std::lerp(1.9f, 1.0f, t / 0.25f) : 1.0f;
-                            float baseScale = pulseScale * zoom;
+                            float baseW = (float)warningTextSprite_->GetMetadata().width;
+                            float baseH = (float)warningTextSprite_->GetMetadata().height;
+                            if (baseW <= 1.0f || baseH <= 1.0f) {
+                                baseW = 760.0f;
+                                baseH = 190.0f;
+                            }
+                            // 画面上の基本表示サイズ (横幅 約 700px)
+                            float targetW = 700.0f;
+                            float targetH = targetW * (baseH / baseW);
 
-                            float textW = 760.0f * baseScale;
-                            float textH = 190.0f * baseScale;
+                            warningTextSprite_->SetTextureRect(0.0f, 0.0f, baseW, baseH);
+                            for (int g = 0; g < 2; ++g) {
+                                if (warningGhostSprites_[g]) warningGhostSprites_[g]->SetTextureRect(0.0f, 0.0f, baseW, baseH);
+                            }
 
-                            float textAlpha = (0.88f + 0.12f * std::sin(warningScrollOffset_ * 20.0f)) * fadeAlpha;
+                            if (t < 0.42f) {
+                                // フェーズA: 画面奥・超音速ソニックブーム突入 (0.0s 〜 0.42s)
+                                float u = t / 0.42f;
+                                float easeOut = 1.0f - std::pow(1.0f - u, 4.0f);
+                                
+                                // 高速ストレッチ（横に伸び、縦に圧縮された超音速突入姿勢から定位置へ戻る）
+                                float scaleX = std::lerp(2.20f, 1.0f, easeOut);
+                                float scaleY = std::lerp(0.50f, 1.0f, easeOut);
+                                float alpha = std::clamp(u * 2.2f, 0.0f, 1.0f);
+                                float textRot = (1.0f - easeOut) * -0.04f;
 
-                            warningTextSprite_->transform.translate = { -textW / 2.0f, textH / 2.0f, 0.0f };
-                            warningTextSprite_->transform.scale = { textW, -textH, 1.0f };
-                            warningTextSprite_->SetColor({ 1.0f, 1.0f, 1.0f, textAlpha });
-                            warningTextSprite_->Draw(commandList, viewProjSprite);
+                                float scrW = targetW * scaleX;
+                                float scrH = targetH * scaleY;
+
+                                // 画面奥/前方からの超高速突入オフセット
+                                float offX = (1.0f - easeOut) * -120.0f;
+                                float offY = (1.0f - easeOut) * 25.0f;
+
+                                // 左右に引く鮮烈な深紅＆オレンジの光速残像ブラー
+                                for (int g = 0; g < 2; ++g) {
+                                    float lag = (float)(g + 1) * 95.0f * (1.0f - easeOut);
+                                    Vector3 gCol = (g == 0) ? themeAccent : themePrimary;
+                                    float gAlpha = alpha * (0.65f - g * 0.25f);
+                                    if (warningGhostSprites_[g]) {
+                                        warningGhostSprites_[g]->SetTextureRect(0.0f, 0.0f, baseW, baseH);
+                                        // 左右に赤い残像ストリークを引く
+                                        drawCenteredSprite(warningGhostSprites_[g].get(), offX - lag, offY, scrW, scrH, textRot, { gCol.x, gCol.y, gCol.z, gAlpha });
+                                        drawCenteredSprite(warningGhostSprites_[g].get(), offX + lag, offY, scrW, scrH, textRot, { gCol.x, gCol.y, gCol.z, gAlpha });
+                                    }
+                                }
+
+                                // 本体：美しい完全なロゴのまま中央へガツンと突入
+                                warningTextSprite_->SetTextureRect(0.0f, 0.0f, baseW, baseH);
+                                drawCenteredSprite(warningTextSprite_.get(), offX, offY, scrW, scrH, textRot, { 1.0f, 1.0f, 1.0f, alpha });
+                            } else if (t < 1.75f) {
+                                // フェーズB: ソニックブーム合体ロック＆ブースト巡航 (0.42s 〜 1.75s)
+                                float elapsed = t - 0.42f;
+                                float impactBounce = 0.0f;
+                                if (elapsed < 0.20f) {
+                                    float bu = 1.0f - (elapsed / 0.20f);
+                                    impactBounce = 0.36f * bu * bu;
+                                }
+                                float slowZoom = 0.06f * (elapsed / (1.75f - 0.42f));
+                                float scaleX = 1.0f + impactBounce + slowZoom;
+                                float scaleY = 1.0f + impactBounce + slowZoom;
+
+                                // 着弾直後の高周波激震シェイク
+                                float shakeAmp = (elapsed < 0.22f) ? (1.0f - elapsed / 0.22f) * 14.0f : 1.4f;
+                                float shakeX = std::sin(t * 160.0f) * shakeAmp;
+                                float shakeY = std::cos(t * 180.0f) * shakeAmp * 0.6f;
+
+                                // 鼓動する警告オーラ残像
+                                for (int g = 0; g < 2; ++g) {
+                                    float pulsePhase = std::fmod(elapsed * 2.4f + g * 0.5f, 1.0f);
+                                    float auraScale = scaleX * (1.05f + 0.45f * pulsePhase);
+                                    float auraAlpha = (1.0f - pulsePhase) * 0.55f;
+                                    Vector3 gCol = (g == 0) ? themePrimary : themeAccent;
+                                    if (warningGhostSprites_[g]) {
+                                        warningGhostSprites_[g]->SetTextureRect(0.0f, 0.0f, baseW, baseH);
+                                        drawCenteredSprite(warningGhostSprites_[g].get(), shakeX, shakeY, targetW * auraScale, targetH * auraScale, 0.0f, { gCol.x, gCol.y, gCol.z, auraAlpha });
+                                    }
+                                }
+
+                                // 赤みを帯びた警告グローパルス
+                                float glowWave = 0.5f + 0.5f * std::sin(t * 18.0f);
+                                Vector4 mainCol = { 1.0f, std::lerp(0.85f, 1.0f, glowWave), std::lerp(0.85f, 1.0f, glowWave), 1.0f };
+                                warningTextSprite_->SetTextureRect(0.0f, 0.0f, baseW, baseH);
+                                drawCenteredSprite(warningTextSprite_.get(), shakeX, shakeY, targetW * scaleX, targetH * scaleY, 0.0f, mainCol);
+                            } else {
+                                // フェーズC: 中央から真っ二つに斬られて左右へスライドしながら消える切断演出 (1.75s 〜 2.45s)
+                                float scaleX = 1.06f;
+                                float scaleY = 1.06f;
+                                float alpha = exitFade;
+
+                                float sw = targetW * scaleX;
+                                float sh = targetH * scaleY;
+
+                                float halfTexW = baseW * 0.5f;
+                                float halfScrW = sw * 0.5f;
+
+                                float leftPieceCenterX  = -halfScrW * 0.5f - exitSplitX;
+                                float rightPieceCenterX =  halfScrW * 0.5f + exitSplitX;
+
+                                // 移動軌跡の残像
+                                float trailShift = (std::min)(60.0f, exitSplitX * 0.22f);
+                                float ghostAlpha = alpha * 0.45f;
+                                if (warningGhostSprites_[1]) {
+                                    warningGhostSprites_[1]->SetTextureRect(0.0f, 0.0f, halfTexW, baseH);
+                                    drawCenteredSprite(warningGhostSprites_[1].get(), leftPieceCenterX + trailShift, 0.0f, halfScrW, sh, 0.0f, { themeAccent.x, themeAccent.y, themeAccent.z, ghostAlpha });
+                                }
+                                if (warningGhostSprites_[0]) {
+                                    warningGhostSprites_[0]->SetTextureRect(halfTexW, 0.0f, halfTexW, baseH);
+                                    drawCenteredSprite(warningGhostSprites_[0].get(), rightPieceCenterX - trailShift, 0.0f, halfScrW, sh, 0.0f, { themeAccent.x, themeAccent.y, themeAccent.z, ghostAlpha });
+                                }
+
+                                // 本体：左半分を左へスライド描画
+                                warningTextSprite_->SetTextureRect(0.0f, 0.0f, halfTexW, baseH);
+                                drawCenteredSprite(warningTextSprite_.get(), leftPieceCenterX, 0.0f, halfScrW, sh, 0.0f, { 1.0f, 1.0f, 1.0f, alpha });
+
+                                // 本体：右半分を右へスライド描画
+                                if (warningGhostSprites_[0]) {
+                                    warningGhostSprites_[0]->SetTextureRect(halfTexW, 0.0f, halfTexW, baseH);
+                                    drawCenteredSprite(warningGhostSprites_[0].get(), rightPieceCenterX, 0.0f, halfScrW, sh, 0.0f, { 1.0f, 1.0f, 1.0f, alpha });
+                                }
+                            }
+                        }
+
+                        // ⑥ ソニックブーム合体閃光 ＆ 中央一閃スラッシュ（最前面）
+                        if (t >= 0.40f && t < 0.70f) {
+                            float u = (t - 0.40f) / 0.30f;
+                            float beamH = 48.0f * (1.0f - u) * (1.0f - u);
+                            float beamAlpha = (1.0f - u);
+                            drawCenteredSprite(phaseIntroBandSprites_[5].get(), 0.0f, 0.0f, clientW + 200.0f, beamH, visorTilt, { 1.0f, 0.90f, 0.80f, beamAlpha });
+                        } else if (t >= 1.70f && t < 2.15f) {
+                            float u = std::clamp((t - 1.70f) / 0.45f, 0.0f, 1.0f);
+                            float slashLen = std::lerp(180.0f, 560.0f, (std::min)(1.0f, u * 3.5f));
+                            float slashThickness = 24.0f * (1.0f - u) * (1.0f - u);
+                            float slashRot = static_cast<float>(M_PI) * 0.5f - 0.08f;
+                            drawCenteredSprite(phaseIntroBandSprites_[5].get(), 0.0f, 0.0f, slashLen, slashThickness, slashRot, { 1.0f, 0.95f, 0.90f, 1.0f - u });
                         }
                     }
                 }
