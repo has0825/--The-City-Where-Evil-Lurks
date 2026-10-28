@@ -116,7 +116,7 @@ public:
     // ── 高速描画用のゲッターを追加 ──
     D3D12_VERTEX_BUFFER_VIEW GetVertexBufferView() const { return commonData_ ? commonData_->vertexBufferView : vertexBufferView_; }
     D3D12_INDEX_BUFFER_VIEW GetIndexBufferView() const { return commonData_ ? commonData_->indexBufferView : indexBufferView_; }
-    UINT GetIndexCount() const { return commonData_ ? (UINT)commonData_->indices.size() : (UINT)indices_.size(); }
+    UINT GetIndexCount() const { return commonData_ ? (UINT)commonData_->indices.size() : indexCount_; }
     ID3D12Resource* GetMaterialResource() const { return materialResource_.Get(); }
 
     EulerTransform transform = { {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} };
@@ -132,6 +132,8 @@ public:
 
 private:
     ModelCommonData* commonData_ = nullptr;
+    uint32_t vertexCount_ = 0;
+    uint32_t indexCount_ = 0;
     std::vector<VertexData> vertices_;
     std::vector<uint32_t> indices_;
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexResource_;
@@ -140,6 +142,7 @@ private:
     D3D12_INDEX_BUFFER_VIEW indexBufferView_{};
     Microsoft::WRL::ComPtr<ID3D12Resource> materialResource_;
 
+    void InitializeMaterialAndSkinning(ID3D12Device* device);
     void ReadNodeHierarchy(struct aiNode* node, Node& outNode);
     void ComputeSkinningMatrices(Node& node, const Matrix4x4& parentMatrix);
 };

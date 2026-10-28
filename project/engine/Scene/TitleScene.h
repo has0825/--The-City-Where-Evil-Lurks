@@ -31,6 +31,8 @@ private:
     bool isTransitioningToGame_ = false;       // 遷移演出中フラグ
     float transitionTimer_ = 0.0f;             // 遷移演出タイマー
     const float kTransitionDuration = 1.3f;    // ブースト加速演出時間 (1.3s)
+    float autoStartTimer_ = 0.0f;              // 自動スタート用タイマー
+    const float kAutoStartTime_ = 3.5f;        // 自動スタートまでの待機時間 (秒)
 
     Microsoft::WRL::ComPtr<ID3D12Resource> transformResource_;
     TransformationMatrix* transformData_ = nullptr;

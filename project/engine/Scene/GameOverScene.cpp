@@ -1,9 +1,11 @@
-#include "GameOverScene.h"
+﻿#include "GameOverScene.h"
 #include "SceneManager.h"
 #include "WinApp.h"
 #include "TextureManager.h"
 #include "MathUtil.h"
 #include "DirectXCommon.h"
+
+GameOverScene::Selection GameOverScene::s_nextAutoSelection_ = GameOverScene::Selection::kRestart;
 
 void GameOverScene::Initialize() {
     // 前のシーンのリソースを即座に解放
@@ -17,7 +19,12 @@ void GameOverScene::Initialize() {
     // クリアカラーを黒に設定
     dxCommon->SetClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
+
     camera_ = std::make_unique<Camera>(WinApp::kClientWidth, WinApp::kClientHeight);
+    autoRestartTimer_ = 0.0f;
+    transitionTimer_ = 0.0f;
+    transitionPhase_ = TransitionPhase::kNone;
+    selection_ = s_nextAutoSelection_;
     camera_->SetTranslate({ 0.0f, 0.0f, -40.0f });
 
     // テクスチャロード
@@ -189,6 +196,7 @@ void GameOverScene::Update() {
         directionalLightData_->spotLightIntensity = 8.0f;
         directionalLightData_->intensity = 0.05f;
         dxCommon->SetClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
         if (gameOverModel_) {
             gameOverModel_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
         }
@@ -197,7 +205,18 @@ void GameOverScene::Update() {
         }
 
         // スペースまたはエンターで決定
-        if (input_->IsKeyTriggered(DIK_SPACE) || input_->IsKeyTriggered(DIK_RETURN)) {
+        autoRestartTimer_ += kDeltaTime;
+        bool autoTrigger = (autoRestartTimer_ >= kAutoRestartTime_);
+
+        // スペースまたはエンターで決定、または自動待機時間終了で決定（再スタートとタイトルへの交互ループ）
+        if (input_->IsKeyTriggered(DIK_SPACE) || input_->IsKeyTriggered(DIK_RETURN) || autoTrigger) {
+            if (autoTrigger) {
+                selection_ = s_nextAutoSelection_;
+            }
+
+            // 次回自動ループ時のターゲットを反転
+            s_nextAutoSelection_ = (selection_ == Selection::kRestart) ? Selection::kTitlehe : Selection::kRestart;
+
             if (selection_ == Selection::kRestart) {
                 transitionPhase_ = TransitionPhase::kToRestart;
                 transitionTimer_ = 0.0f;
@@ -271,6 +290,7 @@ void GameOverScene::Update() {
 
                 // 画面クリアカラーは黒のまま、フェード板は透明
                 dxCommon->SetClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
                 if (whiteFlashSprite_) {
                     whiteFlashSprite_->SetColor({ 1.0f, 1.0f, 1.0f, 0.0f });
                 }

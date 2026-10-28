@@ -1,4 +1,4 @@
-﻿#include "TextureManager.h"
+#include "TextureManager.h"
 #include "DirectXCommon.h"
 #include "D3D12Util.h"
 #include <cassert>
@@ -25,7 +25,7 @@ TextureManager* TextureManager::GetInstance() {
 }
 
 void TextureManager::Initialize(ID3D12Device* device, std::string directoryPath) {
-    if (device_) {
+    if (device_ == device && device_ != nullptr) {
         return;
     }
     device_ = device;
@@ -33,15 +33,11 @@ void TextureManager::Initialize(ID3D12Device* device, std::string directoryPath)
     descriptorSizeSRV_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     useDescriptorIndex_ = 0;
     textureDatas_.clear();
+    commandList_.Reset();
+    commandAllocator_.Reset();
 
     // SrvManagerを使用するため、独自のヒープ生成は削除
     srvHeap_ = SrvManager::GetInstance()->GetDescriptorHeap();
-
-    // コマンドリストの初期化
-    HRESULT hr = device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator_));
-    if (SUCCEEDED(hr) && commandAllocator_) {
-        device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator_.Get(), nullptr, IID_PPV_ARGS(&commandList_));
-    }
 }
 
 uint32_t TextureManager::Allocate() {
@@ -49,6 +45,9 @@ uint32_t TextureManager::Allocate() {
 }
 
 void TextureManager::LoadTexture(const std::string& fileName) {
+    if (!device_ || FAILED(device_->GetDeviceRemovedReason())) {
+        return;
+    }
     if (textureDatas_.contains(fileName)) {
         return;
     }

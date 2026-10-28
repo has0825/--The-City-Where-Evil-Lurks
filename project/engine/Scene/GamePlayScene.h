@@ -408,6 +408,8 @@ private:
     TransformationMatrix* floorTransformData_[kNumFloors] = { nullptr };
     std::vector<Matrix4x4> floorWorldMatrices_;
     bool floorWorldMatricesInitialized_ = false;
+    std::vector<int> visibleDouroFloors_;
+    std::vector<int> visibleJuziroFloors_;
 
     // 広域地面ベース (Ground Base Plane) 用
     Microsoft::WRL::ComPtr<ID3D12Resource> groundBaseTransformResource_;
@@ -637,6 +639,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> webBulletInstancingResource_;
     ParticleForGPU* webBulletInstancingData_ = nullptr;
     D3D12_GPU_DESCRIPTOR_HANDLE webBulletInstancingSrvHandleGPU_{};
+    uint32_t activeWebBulletCount_ = 0;
 
     // なぎ倒しビル投げ攻撃の管理
     struct ThrownBuilding {
@@ -799,6 +802,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> smokeInstancingResource_;
     ParticleForGPU* smokeInstancingData_ = nullptr;
     D3D12_GPU_DESCRIPTOR_HANDLE smokeInstancingSrvHandleGPU_{};
+    uint32_t activeSmokeCount_ = 0;
     void EmitCrashSmoke(const Vector3& pos, const Vector3& inheritedVel, bool isFireEmber = false);
 
     // ── 地形(Terrain)用 ──

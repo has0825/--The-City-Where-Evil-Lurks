@@ -132,6 +132,7 @@ void ParticleManager::Update(
     float playerSpeed) {
 
     // ── 1. 通常 / 回転パーティクルの更新 ──
+    activeParticleCount_ = 0;
 
     for (uint32_t i = 0; i < kNumInstances; ++i) {
         bool isStardust = (isFighterMode && i >= kNumInstances / 2);
@@ -148,9 +149,10 @@ void ParticleManager::Update(
                     particles_[i] = MakeNewParticle(50, jetPos, cameraZ, fighterWorldPos, isBoosting, jetDirection, playerSpeed); // 50: kTypeJetExhaust
                 }
             } else {
-                // デモモードなど非戦闘機モードでは自動リポップさせず、非表示状態を維持する
+                // デモモードなど非戦闘機モードでは自動リポップさせず、非アクティブは行列計算も描画もスキップする
                 particles_[i].color.w = 0.0f;
                 particles_[i].currentTime = particles_[i].lifeTime;
+                continue;
             }
         }
 
@@ -217,6 +219,10 @@ void ParticleManager::Update(
             particles_[i].color.w *= blink;
         }
 
+        if (particles_[i].color.w <= 0.001f) {
+            continue;
+        }
+
         // ワールド行列の計算 (ビルボード Plane vs 回転 Plane)
         Matrix4x4 worldMatrix;
         if (particles_[i].type == Particle::Type::kBillboard) {
@@ -230,18 +236,23 @@ void ParticleManager::Update(
             worldMatrix = MakeAffineMatrix(finalScale, particles_[i].rotate, particles_[i].position);
         }
 
-        instancingData_[i].World = worldMatrix;
-        instancingData_[i].WVP = Multiply(worldMatrix, viewProjectionMatrix);
-        instancingData_[i].color = particles_[i].color;
-        instancingData_[i].uvTransform = particles_[i].uvTransform;
+        uint32_t dstIdx = activeParticleCount_++;
+        instancingData_[dstIdx].World = worldMatrix;
+        instancingData_[dstIdx].WVP = Multiply(worldMatrix, viewProjectionMatrix);
+        instancingData_[dstIdx].color = particles_[i].color;
+        instancingData_[dstIdx].uvTransform = particles_[i].uvTransform;
     }
 
     // ── 2. リングパーティクルの更新 ──
+    activeRingCount_ = 0;
     for (uint32_t i = 0; i < kRingInstanceCount; ++i) {
         if (ringParticles_[i].currentTime < ringParticles_[i].lifeTime) {
             ringParticles_[i].currentTime += deltaTime;
             float alpha = 1.0f - (ringParticles_[i].currentTime / ringParticles_[i].lifeTime);
             ringParticles_[i].color.w = (std::max)(alpha, 0.0f);
+            if (ringParticles_[i].color.w <= 0.001f) {
+                continue;
+            }
             
             // 拡大アニメーション
             ringParticles_[i].scale.x += 15.0f * deltaTime;
@@ -252,33 +263,35 @@ void ParticleManager::Update(
             ringParticles_[i].uvTransform = MakeAffineMatrix(Vector3{1.0f, 1.0f, 1.0f}, Vector3{0.0f, 0.0f, 0.0f}, Vector3{0.0f, uvScrollV, 0.0f});
 
             Matrix4x4 worldMatrix = MakeAffineMatrix(ringParticles_[i].scale, ringParticles_[i].rotate, ringParticles_[i].position);
-            ringInstancingData_[i].World = worldMatrix;
-            ringInstancingData_[i].WVP = Multiply(worldMatrix, viewProjectionMatrix);
-            ringInstancingData_[i].color = ringParticles_[i].color;
-            ringInstancingData_[i].uvTransform = ringParticles_[i].uvTransform;
-        } else {
-            ringInstancingData_[i].color.w = 0.0f;
+            uint32_t dstIdx = activeRingCount_++;
+            ringInstancingData_[dstIdx].World = worldMatrix;
+            ringInstancingData_[dstIdx].WVP = Multiply(worldMatrix, viewProjectionMatrix);
+            ringInstancingData_[dstIdx].color = ringParticles_[i].color;
+            ringInstancingData_[dstIdx].uvTransform = ringParticles_[i].uvTransform;
         }
     }
 
     // ── 3. シリンダーパーティクルの更新 ──
+    activeCylinderCount_ = 0;
     for (uint32_t i = 0; i < kCylinderInstanceCount; ++i) {
         if (cylinderParticles_[i].currentTime < cylinderParticles_[i].lifeTime) {
             cylinderParticles_[i].currentTime += deltaTime;
             float alpha = 1.0f - (cylinderParticles_[i].currentTime / cylinderParticles_[i].lifeTime);
             cylinderParticles_[i].color.w = (std::max)(alpha, 0.0f);
+            if (cylinderParticles_[i].color.w <= 0.001f) {
+                continue;
+            }
             
             // UVスクロール ＆ 反転
             float uvScrollU = cylinderParticles_[i].currentTime * 1.0f;
             cylinderParticles_[i].uvTransform = MakeAffineMatrix(Vector3{1.0f, -1.0f, 1.0f}, Vector3{0.0f, 0.0f, 0.0f}, Vector3{uvScrollU, 1.0f, 0.0f});
 
             Matrix4x4 worldMatrix = MakeAffineMatrix(cylinderParticles_[i].scale, cylinderParticles_[i].rotate, cylinderParticles_[i].position);
-            cylinderInstancingData_[i].World = worldMatrix;
-            cylinderInstancingData_[i].WVP = Multiply(worldMatrix, viewProjectionMatrix);
-            cylinderInstancingData_[i].color = cylinderParticles_[i].color;
-            cylinderInstancingData_[i].uvTransform = cylinderParticles_[i].uvTransform;
-        } else {
-            cylinderInstancingData_[i].color.w = 0.0f;
+            uint32_t dstIdx = activeCylinderCount_++;
+            cylinderInstancingData_[dstIdx].World = worldMatrix;
+            cylinderInstancingData_[dstIdx].WVP = Multiply(worldMatrix, viewProjectionMatrix);
+            cylinderInstancingData_[dstIdx].color = cylinderParticles_[i].color;
+            cylinderInstancingData_[dstIdx].uvTransform = cylinderParticles_[i].uvTransform;
         }
     }
 }
@@ -292,23 +305,27 @@ void ParticleManager::Draw(
     D3D12_GPU_DESCRIPTOR_HANDLE gradationSrvHandle,
     D3D12_GPU_DESCRIPTOR_HANDLE textSrvHandle) {
 
+    if (activeParticleCount_ == 0 && activeRingCount_ == 0 && activeCylinderCount_ == 0) {
+        return;
+    }
+
     // デスクリプタヒープを設定 (StructuredBufferを使用するため)
     ID3D12DescriptorHeap* descriptorHeaps[] = { SrvManager::GetInstance()->GetDescriptorHeap() };
     commandList->SetDescriptorHeaps(1, descriptorHeaps);
 
-    // 1. 通常 / 回転板ポリゴンの描画
-    if (particleModel) {
-        particleModel->Draw(commandList, kNumInstances, textureSrvHandle, instancingSrvHandleGPU_);
+    // 1. 通常 / 回転板ポリゴンの描画 (アクティブなインスタンスのみ描画)
+    if (particleModel && activeParticleCount_ > 0) {
+        particleModel->Draw(commandList, activeParticleCount_, textureSrvHandle, instancingSrvHandleGPU_);
     }
 
-    // 2. リングの描画
-    if (ringModel) {
-        ringModel->Draw(commandList, kRingInstanceCount, gradationSrvHandle, ringInstancingSrvHandleGPU_);
+    // 2. リングの描画 (アクティブなインスタンスのみ描画)
+    if (ringModel && activeRingCount_ > 0) {
+        ringModel->Draw(commandList, activeRingCount_, gradationSrvHandle, ringInstancingSrvHandleGPU_);
     }
 
-    // 3. シリンダーの描画
-    if (cylinderModel) {
-        cylinderModel->Draw(commandList, kCylinderInstanceCount, gradationSrvHandle, cylinderInstancingSrvHandleGPU_);
+    // 3. シリンダーの描画 (アクティブなインスタンスのみ描画)
+    if (cylinderModel && activeCylinderCount_ > 0) {
+        cylinderModel->Draw(commandList, activeCylinderCount_, gradationSrvHandle, cylinderInstancingSrvHandleGPU_);
     }
 }
 
@@ -1478,6 +1495,9 @@ void ParticleManager::Clear() {
         particles_[i].currentTime = particles_[i].lifeTime;
         particles_[i].color.w = 0.0f;
     }
+    activeParticleCount_ = 0;
+    activeRingCount_ = 0;
+    activeCylinderCount_ = 0;
 }
 
 void ParticleManager::EmitMegaRing(const Vector3& emitterPos, const Vector3& color) {
@@ -1587,4 +1607,4 @@ void ParticleManager::EmitFireworkTrail(const Vector3& emitterPos, const Vector3
             emitCount--;
         }
     }
-}
+}

@@ -31,6 +31,8 @@ public:
     void DrawPreviousScene();
     // 直前のシーンを完全に解放
     void ClearPreviousScene();
+    // 全シーンの状態を完全リセット（デバイスフォールバック再初期化用）
+    void Reset();
 
     // ロード中かどうかを取得
     bool IsLoading() const { return isLoading_; }

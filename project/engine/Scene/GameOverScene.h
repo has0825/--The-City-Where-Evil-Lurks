@@ -63,6 +63,7 @@ private:
         kRestart,
         kTitlehe
     } selection_ = Selection::kRestart;
+    static Selection s_nextAutoSelection_;
 
     enum class TransitionPhase {
         kNone,
@@ -72,4 +73,6 @@ private:
 
     float transitionTimer_ = 0.0f;
     const float kTransitionTime = 1.0f;
+    float autoRestartTimer_ = 0.0f;            // 自動遷移用タイマー
+    const float kAutoRestartTime_ = 3.8f;      // 自動でタイトルへ戻るまでの待機時間 (秒)
 };

@@ -241,6 +241,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <TreatWarningAsError>true</TreatWarningAsError>
       <AdditionalIncludeDirectories>$(ProjectDir)externals\assimp\include;$(ProjectDir);$(ProjectDir)engine\D3D12Util;$(ProjectDir)engine\Math;$(ProjectDir)engine\Model;$(ProjectDir)engine\Pipeline state;$(ProjectDir)engine\window;$(ProjectDir)engine\Input;$(ProjectDir)engine\Basic functions;$(ProjectDir)engine\Scene;$(ProjectDir)engine\Manager;$(ProjectDir)engine\Audio;$(ProjectDir)engine\Graphics;$(ProjectDir)engine\Framework;$(ProjectDir)engine\Common;$(ProjectDir)engine\Test</AdditionalIncludeDirectories>
@@ -270,6 +271,7 @@ xcopy /E /I /Y /D "$(ProjectDir)Resources" "$(TargetDir)Resources"</Command>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>$(ProjectDir)externals\assimp\include;$(ProjectDir);$(ProjectDir)engine\D3D12Util;$(ProjectDir)engine\Math;$(ProjectDir)engine\Model;$(ProjectDir)engine\Pipeline state;$(ProjectDir)engine\window;$(ProjectDir)engine\Input;$(ProjectDir)engine\Basic functions;$(ProjectDir)engine\Scene;$(ProjectDir)engine\Manager;$(ProjectDir)engine\Audio;$(ProjectDir)engine\Graphics;$(ProjectDir)engine\Framework;$(ProjectDir)engine\Common;$(ProjectDir)engine\Test</AdditionalIncludeDirectories>
     </ClCompile>
@@ -299,6 +301,7 @@ xcopy /E /I /Y /D "$(ProjectDir)Resources" "$(TargetDir)Resources"</Command>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <Optimization>Disabled</Optimization>
       <WholeProgramOptimization>false</WholeProgramOptimization>

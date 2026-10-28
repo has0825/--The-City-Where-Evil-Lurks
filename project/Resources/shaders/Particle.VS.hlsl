@@ -17,6 +17,16 @@ VertexShaderOutput main(VertexShaderInput input, uint instanceID : SV_InstanceID
 	// ★修正: ParticleForGPU としてデータ取得
     ParticleForGPU particle = gParticle[instanceID];
 
+    // 寿命切れ・非表示パーティクルはクリップ空間外へ退避し、ラスタライズとPSのdiscard負荷をゼロにする
+    if (particle.color.a <= 0.001f)
+    {
+        output.position = float32_t4(2.0f, 2.0f, 2.0f, 1.0f);
+        output.texcoord = float32_t2(0.0f, 0.0f);
+        output.normal = float32_t3(0.0f, 1.0f, 0.0f);
+        output.color = float32_t4(0.0f, 0.0f, 0.0f, 0.0f);
+        return output;
+    }
+
     output.position = mul(input.position, particle.WVP);
     output.texcoord = mul(float32_t4(input.texcoord, 0.0f, 1.0f), particle.uvTransform).xy;
     output.normal = normalize(mul(input.normal, (float32_t3x3) particle.World));

@@ -110,6 +110,7 @@ private:
     ParticleForGPU* instancingData_ = nullptr;
     D3D12_GPU_DESCRIPTOR_HANDLE instancingSrvHandleGPU_ = {};
     std::vector<Particle> particles_;
+    uint32_t activeParticleCount_ = 0;
 
     // --- リングパーティクル (最大100インスタンス) ---
     const uint32_t kRingInstanceCount = 100;
@@ -117,6 +118,7 @@ private:
     ParticleForGPU* ringInstancingData_ = nullptr;
     D3D12_GPU_DESCRIPTOR_HANDLE ringInstancingSrvHandleGPU_ = {};
     std::vector<Particle> ringParticles_;
+    uint32_t activeRingCount_ = 0;
 
     // --- シリンダーパーティクル (最大50インスタンス) ---
     const uint32_t kCylinderInstanceCount = 50;
@@ -124,4 +126,5 @@ private:
     ParticleForGPU* cylinderInstancingData_ = nullptr;
     D3D12_GPU_DESCRIPTOR_HANDLE cylinderInstancingSrvHandleGPU_ = {};
     std::vector<Particle> cylinderParticles_;
+    uint32_t activeCylinderCount_ = 0;
 };

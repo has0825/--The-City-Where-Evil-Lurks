@@ -1,5 +1,6 @@
 #include "Audio.h"
 #include <cassert>
+#include <map>
 
 // Media Foundation 関連のヘッダーとライブラリ
 #include <mfapi.h>
@@ -28,6 +29,14 @@ void Audio::Initialize() {
 }
 
 void Audio::Finalize() {
+	for (IXAudio2SourceVoice* voice : activeVoices_) {
+		if (voice) {
+			voice->Stop();
+			voice->DestroyVoice();
+		}
+	}
+	activeVoices_.clear();
+
 	// XAudio2はComPtrが自動解放してくれますが、MasterVoiceは明示的に破棄が必要な場合がある
 	if (masterVoice_) {
 		masterVoice_->DestroyVoice();
@@ -40,6 +49,12 @@ void Audio::Finalize() {
 }
 
 SoundData Audio::LoadAudio(const std::string& filename) {
+	static std::map<std::string, SoundData> s_soundCache;
+	auto cacheIt = s_soundCache.find(filename);
+	if (cacheIt != s_soundCache.end()) {
+		return cacheIt->second;
+	}
+
 	SoundData soundData = {};
 	HRESULT result;
 
@@ -115,12 +130,30 @@ SoundData Audio::LoadAudio(const std::string& filename) {
 	soundData.pBuffer = std::move(mediaData);
 	soundData.bufferSize = static_cast<unsigned int>(soundData.pBuffer.size());
 
+	s_soundCache[filename] = soundData;
 	return soundData;
 }
 
 void Audio::PlayWave(const SoundData& soundData, bool loop, float volume) {
 	if (isMuted_ || !xAudio2_ || soundData.pBuffer.empty()) {
 		return;
+	}
+
+	// 再生終了済みのSourceVoiceを回収・破棄してメモリ・CPUリークを防ぐ
+	for (auto it = activeVoices_.begin(); it != activeVoices_.end(); ) {
+		IXAudio2SourceVoice* v = *it;
+		if (!v) {
+			it = activeVoices_.erase(it);
+			continue;
+		}
+		XAUDIO2_VOICE_STATE state{};
+		v->GetState(&state, XAUDIO2_VOICE_NOSAMPLESPLAYED);
+		if (state.BuffersQueued == 0) {
+			v->DestroyVoice();
+			it = activeVoices_.erase(it);
+		} else {
+			++it;
+		}
 	}
 
 	HRESULT result;
@@ -158,4 +191,6 @@ void Audio::PlayWave(const SoundData& soundData, bool loop, float volume) {
 		pSourceVoice->DestroyVoice();
 		return;
 	}
+
+	activeVoices_.push_back(pSourceVoice);
 }

@@ -7,9 +7,15 @@
 void PostProcess::Initialize(DirectXCommon* dxCommon, uint32_t width, uint32_t height) {
     dxCommon_ = dxCommon;
     
+    if (!dxCommon_ || !dxCommon_->GetDevice() || FAILED(dxCommon_->GetDevice()->GetDeviceRemovedReason())) {
+        return;
+    }
     // RenderTextureリソース作成 (資料通りSRGBあり)
     Vector4 clearColor = { 1.0f, 0.0f, 0.0f, 1.0f }; // 資料通り一旦赤
     resource_ = CreateRenderTextureResource(dxCommon_->GetDevice(), width, height, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, clearColor);
+    if (!resource_) {
+        return;
+    }
     
     // RTVの作成
     rtvHandle_ = dxCommon_->GetRenderTextureRtvHandle();

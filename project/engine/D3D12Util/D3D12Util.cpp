@@ -196,28 +196,55 @@ Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(ID3D12Resource* texture
         return nullptr;
     }
 
-    // 一時的なコマンドリストとアロケータを作成して実行する
-    Microsoft::WRL::ComPtr<ID3D12CommandAllocator> tempAllocator;
-    hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tempAllocator));
-    if (FAILED(hr) || !tempAllocator) {
-        char buf[256];
-        HRESULT reason = device->GetDeviceRemovedReason();
-        sprintf_s(buf, "[D3D12 ERROR] CreateCommandAllocator failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
-        OutputDebugStringA(buf);
-        return nullptr;
+    // CommandAllocator / CommandList / Fence を静的再利用してWDDMハンドル枯渇(Device Removed)を防止
+    static ID3D12Device* s_cachedDevice = nullptr;
+    static Microsoft::WRL::ComPtr<ID3D12CommandAllocator> s_uploadAllocator;
+    static Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> s_uploadCommandList;
+    static Microsoft::WRL::ComPtr<ID3D12Fence> s_uploadFence;
+    static UINT64 s_uploadFenceValue = 0;
+    static HANDLE s_uploadFenceEvent = nullptr;
+
+    if (s_cachedDevice != device || !s_uploadAllocator || !s_uploadCommandList || !s_uploadFence) {
+        s_uploadCommandList.Reset();
+        s_uploadAllocator.Reset();
+        s_uploadFence.Reset();
+        if (s_uploadFenceEvent) {
+            CloseHandle(s_uploadFenceEvent);
+            s_uploadFenceEvent = nullptr;
+        }
+        s_uploadFenceValue = 0;
+
+        hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&s_uploadAllocator));
+        if (FAILED(hr) || !s_uploadAllocator) {
+            char buf[256];
+            HRESULT reason = device->GetDeviceRemovedReason();
+            sprintf_s(buf, "[D3D12 ERROR] CreateCommandAllocator failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
+            OutputDebugStringA(buf);
+            return nullptr;
+        }
+
+        hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, s_uploadAllocator.Get(), nullptr, IID_PPV_ARGS(&s_uploadCommandList));
+        if (FAILED(hr) || !s_uploadCommandList) {
+            char buf[256];
+            HRESULT reason = device->GetDeviceRemovedReason();
+            sprintf_s(buf, "[D3D12 ERROR] CreateCommandList failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
+            OutputDebugStringA(buf);
+            return nullptr;
+        }
+        s_uploadCommandList->Close();
+
+        hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&s_uploadFence));
+        if (FAILED(hr) || !s_uploadFence) {
+            return nullptr;
+        }
+        s_uploadFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+        s_cachedDevice = device;
     }
 
-    Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> tempCommandList;
-    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tempAllocator.Get(), nullptr, IID_PPV_ARGS(&tempCommandList));
-    if (FAILED(hr) || !tempCommandList) {
-        char buf[256];
-        HRESULT reason = device->GetDeviceRemovedReason();
-        sprintf_s(buf, "[D3D12 ERROR] CreateCommandList failed! hr=0x%08X, reason=0x%08X\n", (UINT)hr, (UINT)reason);
-        OutputDebugStringA(buf);
-        return nullptr;
-    }
+    s_uploadAllocator->Reset();
+    s_uploadCommandList->Reset(s_uploadAllocator.Get(), nullptr);
 
-    UpdateSubresources(tempCommandList.Get(), texture, intermediate.Get(), 0, 0, static_cast<UINT>(subresources.size()), subresources.data());
+    UpdateSubresources(s_uploadCommandList.Get(), texture, intermediate.Get(), 0, 0, static_cast<UINT>(subresources.size()), subresources.data());
 
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -225,9 +252,9 @@ Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(ID3D12Resource* texture
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    tempCommandList->ResourceBarrier(1, &barrier);
+    s_uploadCommandList->ResourceBarrier(1, &barrier);
 
-    tempCommandList->Close();
+    s_uploadCommandList->Close();
 
     // 実行用キューの取得 (シングルトン経由)
     ID3D12CommandQueue* commandQueue = DirectXCommon::GetInstance()->GetCommandQueue();
@@ -235,20 +262,17 @@ Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(ID3D12Resource* texture
         return intermediate;
     }
 
-    ID3D12CommandList* commandLists[] = { tempCommandList.Get() };
+    ID3D12CommandList* commandLists[] = { s_uploadCommandList.Get() };
     commandQueue->ExecuteCommandLists(1, commandLists);
 
     // 完了待機
-    Microsoft::WRL::ComPtr<ID3D12Fence> fence;
-    device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
-    if (fence) {
-        HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        commandQueue->Signal(fence.Get(), 1);
-        if (fence->GetCompletedValue() < 1) {
-            fence->SetEventOnCompletion(1, fenceEvent);
-            WaitForSingleObject(fenceEvent, INFINITE);
+    if (s_uploadFence && s_uploadFenceEvent) {
+        ++s_uploadFenceValue;
+        commandQueue->Signal(s_uploadFence.Get(), s_uploadFenceValue);
+        if (s_uploadFence->GetCompletedValue() < s_uploadFenceValue) {
+            s_uploadFence->SetEventOnCompletion(s_uploadFenceValue, s_uploadFenceEvent);
+            WaitForSingleObject(s_uploadFenceEvent, INFINITE);
         }
-        CloseHandle(fenceEvent);
     }
 
     return intermediate;

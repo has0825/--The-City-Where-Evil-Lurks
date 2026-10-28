@@ -21,9 +21,6 @@ public:
 	void Finalize();
 
 	// 音声ファイルの読み込み (.wav, .mp3, .aac等 対応)
-	// 返り値としてSoundDataのハンドル(インデックス等)ではなく、構造体そのものを管理しやすい形で返します
-	// 実際の運用ではハンドル管理する場合もありますが、今回は分かりやすくポインタ管理などは呼び出し元に任せるか、
-	// 簡易的に構造体を返して保持してもらうスタイルにします。
 	SoundData LoadAudio(const std::string& filename);
 
 	// 音声再生
@@ -39,5 +36,6 @@ public:
 private:
 	Microsoft::WRL::ComPtr<IXAudio2> xAudio2_;
 	IXAudio2MasteringVoice* masterVoice_ = nullptr;
+	std::vector<IXAudio2SourceVoice*> activeVoices_;
 	bool isMuted_ = true; // デフォルトでミュート(消音)状態
 };

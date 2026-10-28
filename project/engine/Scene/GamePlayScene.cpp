@@ -194,6 +194,7 @@ void GamePlayScene::Initialize() {
     particleManager_->Initialize(device);
 
     transformResource_ = CreateBufferResource(device, sizeof(TransformationMatrix));
+    if (!transformResource_ || FAILED(device->GetDeviceRemovedReason())) return;
     transformResource_->Map(0, nullptr, reinterpret_cast<void**>(&transformData_));
     transformData_->WVP = MakeIdentity4x4();
     transformData_->World = MakeIdentity4x4();
@@ -250,6 +251,7 @@ void GamePlayScene::Initialize() {
     selectedNoiseIndex_ = 1;
 
     dissolveParamResource_ = CreateBufferResource(device, sizeof(DissolveParameter));
+    if (!dissolveParamResource_ || FAILED(device->GetDeviceRemovedReason())) return;
     dissolveParamResource_->Map(0, nullptr, reinterpret_cast<void**>(&dissolveParamData_));
     dissolveParamData_->threshold = 1.0f;
     dissolveParamData_->edgeColor = { 1.0f, 1.0f, 1.0f };
@@ -352,12 +354,6 @@ void GamePlayScene::Initialize() {
     TextureManager::GetInstance()->LoadTexture("aiming.png");
     TextureManager::GetInstance()->LoadTexture("Player2/Player_basecolor.JPEG");
     TextureManager::GetInstance()->LoadTexture("Player/player.png");
-    TextureManager::GetInstance()->LoadTexture("cobblestone_street_night_2k.dds");
-    TextureManager::GetInstance()->LoadTexture("rostock_laage_airport_4k.dds");
-    TextureManager::GetInstance()->LoadTexture("dds/moonless_golf_2k.dds");
-    TextureManager::GetInstance()->LoadTexture("dds/qwantani_night_puresky_2k.dds");
-    TextureManager::GetInstance()->LoadTexture("test.dds");
-    TextureManager::GetInstance()->LoadTexture("tesuto.dds");
 
     skybox_ = std::make_unique<Skybox>();
     skybox_->Initialize(device);
@@ -371,9 +367,16 @@ void GamePlayScene::Initialize() {
     if (enemyModel_) {
         enemyModel_->transform.scale = { 10.0f, 10.0f, 10.0f };
     }
+
+    if (!device || FAILED(device->GetDeviceRemovedReason())) {
+        return;
+    }
     
     // 戦闘機用トランスフォーム
     fighterTransformResource_ = CreateBufferResource(device, sizeof(TransformationMatrix));
+    if (!fighterTransformResource_ || FAILED(device->GetDeviceRemovedReason())) {
+        return;
+    }
     fighterTransformResource_->Map(0, nullptr, reinterpret_cast<void**>(&fighterTransformData_));
     fighterTransformData_->WVP = MakeIdentity4x4();
     fighterTransformData_->World = MakeIdentity4x4();
@@ -455,6 +458,7 @@ void GamePlayScene::Initialize() {
     // ビル用定数バッファの一括生成（30,000個のリソース割り当てを1回にまとめて爆速化）
     const UINT cbAlignment = 256;
     buildingTransformBufferResource_ = CreateBufferResource(device, cbAlignment * kMaxBuildingCBs);
+    if (!buildingTransformBufferResource_ || FAILED(device->GetDeviceRemovedReason())) return;
     uint8_t* buildingMappedPtr = nullptr;
     buildingTransformBufferResource_->Map(0, nullptr, reinterpret_cast<void**>(&buildingMappedPtr));
 
@@ -506,6 +510,7 @@ void GamePlayScene::Initialize() {
     TextureManager::GetInstance()->LoadTexture("juziro.jpg");
 
     floorTransformBufferResource_ = CreateBufferResource(device, cbAlignment * kNumFloors);
+    if (!floorTransformBufferResource_ || FAILED(device->GetDeviceRemovedReason())) return;
     uint8_t* floorMappedPtr = nullptr;
     floorTransformBufferResource_->Map(0, nullptr, reinterpret_cast<void**>(&floorMappedPtr));
 
@@ -541,11 +546,14 @@ void GamePlayScene::Initialize() {
         skydomeMaterialRes->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
         if (materialData) {
             materialData->enableLighting = 0;
+            float uvScale = 4.0f;
+            materialData->uvTransform = MakeScaleMatrix({ uvScale, uvScale, 1.0f });
         }
         skydomeMaterialRes->Unmap(0, nullptr);
     }
 
     skydomeTransformRes_ = CreateBufferResource(device, sizeof(TransformationMatrix));
+    if (!skydomeTransformRes_ || FAILED(device->GetDeviceRemovedReason())) return;
     skydomeTransformRes_->Map(0, nullptr, reinterpret_cast<void**>(&skydomeTransformData_));
     skydomeTransformData_->WVP   = MakeIdentity4x4();
     skydomeTransformData_->World = MakeIdentity4x4();
@@ -675,6 +683,7 @@ void GamePlayScene::Initialize() {
     
     // 定数バッファの生成
     cubeTransformResource_ = CreateBufferResource(device, sizeof(TransformationMatrix));
+    if (!cubeTransformResource_ || FAILED(device->GetDeviceRemovedReason())) return;
     cubeTransformResource_->Map(0, nullptr, reinterpret_cast<void**>(&cubeTransformData_));
     cubeTransformData_->WVP = MakeIdentity4x4();
     cubeTransformData_->World = MakeIdentity4x4();
@@ -690,6 +699,7 @@ void GamePlayScene::Initialize() {
     animatedCubeRenderModel_->bones_ = animatedCubeModel_.bones;
     
     animatedCubeTransformResource_ = CreateBufferResource(device, sizeof(TransformationMatrix));
+    if (!animatedCubeTransformResource_ || FAILED(device->GetDeviceRemovedReason())) return;
     animatedCubeTransformResource_->Map(0, nullptr, reinterpret_cast<void**>(&animatedCubeTransformData_));
     animatedCubeTransformData_->WVP = MakeIdentity4x4();
     animatedCubeTransformData_->World = MakeIdentity4x4();
@@ -744,6 +754,7 @@ void GamePlayScene::Initialize() {
 
     // 胴体用の定数バッファ生成とマップ
     bossBodyTransformResource_ = CreateBufferResource(device, sizeof(TransformationMatrix));
+    if (!bossBodyTransformResource_ || FAILED(device->GetDeviceRemovedReason())) return;
     bossBodyTransformResource_->Map(0, nullptr, reinterpret_cast<void**>(&bossBodyTransformData_));
     bossBodyTransformData_->WVP = MakeIdentity4x4();
     bossBodyTransformData_->World = MakeIdentity4x4();
@@ -869,6 +880,52 @@ void GamePlayScene::Initialize() {
     */
 
     // ── scene_layout.txt のインポート処理 ──
+    struct StaticLayoutCache {
+        std::vector<Building> buildings;
+        std::vector<Vector3> waypoints;
+        std::vector<float> waypointDistances;
+        int numLoadedFloors = 0;
+        Vector3 floorPositions[kNumFloors];
+        Vector3 floorRotations[kNumFloors];
+        int floorLanes[kNumFloors];
+        int floorIsJuziro[kNumFloors];
+        float floorProgresses[kNumFloors];
+        struct EnemyData {
+            Vector3 position;
+            Vector3 scale;
+            Vector3 rotate;
+            float radius;
+            float hp;
+            BoxCollider collider;
+        };
+        std::vector<EnemyData> enemies;
+        bool isValid = false;
+    };
+    static StaticLayoutCache s_staticLayoutCache;
+
+    if (s_staticLayoutCache.isValid) {
+        buildings_ = s_staticLayoutCache.buildings;
+        waypoints_ = s_staticLayoutCache.waypoints;
+        waypointDistances_ = s_staticLayoutCache.waypointDistances;
+        numLoadedFloors_ = s_staticLayoutCache.numLoadedFloors;
+        std::memcpy(floorPositions_, s_staticLayoutCache.floorPositions, sizeof(floorPositions_));
+        std::memcpy(floorRotations_, s_staticLayoutCache.floorRotations, sizeof(floorRotations_));
+        std::memcpy(floorLanes_, s_staticLayoutCache.floorLanes, sizeof(floorLanes_));
+        std::memcpy(floorIsJuziro_, s_staticLayoutCache.floorIsJuziro, sizeof(floorIsJuziro_));
+        std::memcpy(floorProgresses_, s_staticLayoutCache.floorProgresses, sizeof(floorProgresses_));
+        for (int i = 0; i < kMaxEnemies; ++i) {
+            enemies_[i].isAlive = false;
+        }
+        for (size_t i = 0; i < s_staticLayoutCache.enemies.size() && i < kMaxEnemies; ++i) {
+            enemies_[i].position = s_staticLayoutCache.enemies[i].position;
+            enemies_[i].scale = s_staticLayoutCache.enemies[i].scale;
+            enemies_[i].rotate = s_staticLayoutCache.enemies[i].rotate;
+            enemies_[i].radius = s_staticLayoutCache.enemies[i].radius;
+            enemies_[i].hp = s_staticLayoutCache.enemies[i].hp;
+            enemies_[i].collider = s_staticLayoutCache.enemies[i].collider;
+            enemies_[i].isAlive = true;
+        }
+    } else {
     int floorCount = 0;
     std::ifstream layoutInFile("Resources/scene_layout.txt");
     if (layoutInFile.is_open()) {
@@ -1233,10 +1290,16 @@ void GamePlayScene::Initialize() {
         // ── プレイヤー進行ルート（コース中央脇）へのビル増量・高密度配置 ──
         if (!waypointDistances_.empty() && waypointDistances_.back() > 0.0f) {
             float totalDist = waypointDistances_.back();
+        std::vector<Vector3> sampledRailPositions;
+        sampledRailPositions.reserve(static_cast<size_t>(totalDist / 10.0f) + 16);
+        for (float s = 0.0f; s <= totalDist; s += 10.0f) {
+            sampledRailPositions.push_back(GetRailPosition(s));
+        }
             float buildingPitch = 40.0f; // 40m間隔で進行方向の左右にビルを高密度補填
 
             for (float s = 20.0f; s < totalDist; s += buildingPitch) {
                 Vector3 railPos = GetRailPosition(s);
+
                 Vector3 railDir = GetRailDirection(s);
                 Vector3 railRight = CalculateRailRight(railDir);
 
@@ -1357,6 +1420,11 @@ void GamePlayScene::Initialize() {
     // ── 空いた寂しいスペースへのダミービル自動生成 ──
     if (!waypoints_.empty() && !waypointDistances_.empty() && waypointDistances_.back() > 0.0f) {
         float totalDist = waypointDistances_.back();
+        std::vector<Vector3> sampledRailPositions;
+        sampledRailPositions.reserve(static_cast<size_t>(totalDist / 10.0f) + 16);
+        for (float s = 0.0f; s <= totalDist; s += 10.0f) {
+            sampledRailPositions.push_back(GetRailPosition(s));
+        }
         float checkStep = 20.0f; // 進行ライン上の判定を網羅するステップ
         const float kMinDistToRoute = 45.0f; // コース中心から45m以内は配置禁止（道路を塞がない）
         const float kMinDistToRouteSq = kMinDistToRoute * kMinDistToRoute;
@@ -1374,8 +1442,8 @@ void GamePlayScene::Initialize() {
 
                 // 1. コース（進行レール）との距離チェック
                 bool isNearRoute = false;
-                for (float s = 0.0f; s <= totalDist; s += checkStep) {
-                    Vector3 railPos = GetRailPosition(s);
+                for (const auto& railPos : sampledRailPositions) {
+
                     float dx = bPos.x - railPos.x;
                     float dz = bPos.z - railPos.z;
                     if (dx * dx + dz * dz < kMinDistToRouteSq) {
@@ -1422,6 +1490,11 @@ void GamePlayScene::Initialize() {
     // ── プレイヤーが通る中央タイル/レールおよび十字路の縦道・横道と重なっているビルを自動削除 ──
     if (!waypoints_.empty() && !waypointDistances_.empty() && waypointDistances_.back() > 0.0f) {
         float totalDist = waypointDistances_.back();
+        std::vector<Vector3> sampledRailPositions;
+        sampledRailPositions.reserve(static_cast<size_t>(totalDist / 10.0f) + 16);
+        for (float s = 0.0f; s <= totalDist; s += 10.0f) {
+            sampledRailPositions.push_back(GetRailPosition(s));
+        }
         float checkStep = 10.0f; // 10m間隔で進行ライン上の判定を網羅
         const float kCenterClearRadius = 40.0f; // 進行ルート中心から40m以内（道路通行域）のビルは削除対象
 
@@ -1429,8 +1502,8 @@ void GamePlayScene::Initialize() {
             if (buildings_[i].floors <= 0 || buildings_[i].isDestroyed) continue;
 
             bool isOverlappingWithCenter = false;
-            for (float s = 0.0f; s <= totalDist; s += checkStep) {
-                Vector3 railPos = GetRailPosition(s);
+            for (const auto& railPos : sampledRailPositions) {
+
                 float dx = buildings_[i].position.x - railPos.x;
                 float dz = buildings_[i].position.z - railPos.z;
                 if (dx * dx + dz * dz < kCenterClearRadius * kCenterClearRadius) {
@@ -1478,8 +1551,8 @@ void GamePlayScene::Initialize() {
             if (buildings_[i].floors <= 0) continue;
 
             float minSqDist = 1e9f;
-            for (float s = 0.0f; s <= totalDist; s += routeCheckStep) {
-                Vector3 railPos = GetRailPosition(s);
+            for (const auto& railPos : sampledRailPositions) {
+
                 float dx = buildings_[i].position.x - railPos.x;
                 float dz = buildings_[i].position.z - railPos.z;
                 float sqDist = dx * dx + dz * dz;
@@ -1492,6 +1565,31 @@ void GamePlayScene::Initialize() {
             // 元の isNearCourseColumn（曲がり角延長上の高密度補テンフラグ等）を保持しつつ判定
             buildings_[i].isNearCourseColumn = buildings_[i].isNearCourseColumn || (minSqDist <= kNearRouteDistSq);
         }
+    }
+
+        s_staticLayoutCache.buildings = buildings_;
+        s_staticLayoutCache.waypoints = waypoints_;
+        s_staticLayoutCache.waypointDistances = waypointDistances_;
+        s_staticLayoutCache.numLoadedFloors = numLoadedFloors_;
+        std::memcpy(s_staticLayoutCache.floorPositions, floorPositions_, sizeof(floorPositions_));
+        std::memcpy(s_staticLayoutCache.floorRotations, floorRotations_, sizeof(floorRotations_));
+        std::memcpy(s_staticLayoutCache.floorLanes, floorLanes_, sizeof(floorLanes_));
+        std::memcpy(s_staticLayoutCache.floorIsJuziro, floorIsJuziro_, sizeof(floorIsJuziro_));
+        std::memcpy(s_staticLayoutCache.floorProgresses, floorProgresses_, sizeof(floorProgresses_));
+        s_staticLayoutCache.enemies.clear();
+        for (int i = 0; i < kMaxEnemies; ++i) {
+            if (enemies_[i].isAlive) {
+                s_staticLayoutCache.enemies.push_back({
+                    enemies_[i].position,
+                    enemies_[i].scale,
+                    enemies_[i].rotate,
+                    enemies_[i].radius,
+                    enemies_[i].hp,
+                    enemies_[i].collider
+                });
+            }
+        }
+        s_staticLayoutCache.isValid = true;
     }
 
     // ── デモ用データの初期化 ──
@@ -2891,6 +2989,14 @@ void GamePlayScene::Update() {
                 if (input_->IsKeyPressed(DIK_S)) inputDir.y -= 1.0f;
                 if (input_->IsKeyPressed(DIK_A)) inputDir.x -= 1.0f;
                 if (input_->IsKeyPressed(DIK_D)) inputDir.x += 1.0f;
+
+                // キー入力がない場合は、自動操縦（オートフライト）により自然に左右・上下に旋回する
+                if (inputDir.x == 0.0f && inputDir.y == 0.0f) {
+                    static float autoFlyTime = 0.0f;
+                    autoFlyTime += kDeltaTime;
+                    inputDir.x = std::sin(autoFlyTime * 1.4f) * 0.40f;
+                    inputDir.y = std::cos(autoFlyTime * 1.0f) * 0.20f;
+                }
             }
 
             if (inputDir.x != 0 || inputDir.y != 0) {
@@ -3467,7 +3573,7 @@ void GamePlayScene::Update() {
 
 
             // ── Blender同期: game_state.jsonの出力（3フレームに1回）──
-            if (input_->IsKeyTriggered(DIK_B) && !isTitleMode_) {
+            if ((input_->IsKeyPressed(DIK_LCONTROL) || input_->IsKeyPressed(DIK_RCONTROL)) && input_->IsKeyTriggered(DIK_B) && !isTitleMode_) {
                 isBlenderSyncEnabled_ = !isBlenderSyncEnabled_;
             }
             if (isBlenderSyncEnabled_ && ++blenderSyncCounter_ % 5 == 0) {
@@ -3618,7 +3724,7 @@ void GamePlayScene::Update() {
             }
 
             // ── Blenderパラメータ読み込み (60フレームに1回) ──
-            if (++blenderParamReadCounter_ >= 60) {
+            if (isBlenderSyncEnabled_ && ++blenderParamReadCounter_ >= 60) {
                 blenderParamReadCounter_ = 0;
                 std::ifstream paramIn("Resources/blender_params.txt");
                 if (paramIn.is_open()) {
@@ -3782,6 +3888,9 @@ void GamePlayScene::Update() {
                     auto& b = buildings_[i];
                     if (b.floors <= 0 || b.isDestroyed) continue;
                     if (!b.collider.hasCollider) continue;
+                    float dx = b.position.x - fighterWorldPos.x;
+                    float dz = b.position.z - fighterWorldPos.z;
+                    if (dx * dx + dz * dz > 60.0f * 60.0f) continue;
                     
                     Vector3 boxScale = { b.scale.x, b.scale.y * b.floors, b.scale.z };
                     if (IsCollidingOBBAndSphere(fighterWorldPos, playerCollisionRadius_, b.position, boxScale, b.rotate.y, b.collider.center, b.collider.size)) {
@@ -3801,7 +3910,24 @@ void GamePlayScene::Update() {
                     if (!enemy.isAlive) continue;
 
                     bool hit = false;
-                    if (enemy.collider.hasCollider) {
+
+                    if (enemy.state == Enemy::State::kDive) {
+                        Vector3 diff = Subtract(fighterWorldPos, enemy.position);
+                        float dist = Length(diff);
+                        float r = (enemy.radius > 0.0f) ? enemy.radius : 4.0f;
+                        if (dist <= (r + playerCollisionRadius_ + 3.0f)) {
+                            hit = true;
+                        } else {
+                            float frameMovement = enemy.speed * kDeltaTime;
+                            float zDiff = enemy.position.z - fighterWorldPos.z;
+                            if (std::abs(zDiff) < (frameMovement * 1.2f + 5.0f)) {
+                                float distXY = std::sqrt(diff.x * diff.x + diff.y * diff.y);
+                                if (distXY <= (r + playerCollisionRadius_ + 4.0f)) {
+                                    hit = true;
+                                }
+                            }
+                        }
+                    } else if (enemy.collider.hasCollider) {
                         hit = IsCollidingOBBAndSphere(fighterWorldPos, playerCollisionRadius_, enemy.position, enemy.scale, enemy.rotate.y, enemy.collider.center, enemy.collider.size);
                     } else {
                         Vector3 diff = Subtract(fighterWorldPos, enemy.position);
@@ -3826,12 +3952,21 @@ void GamePlayScene::Update() {
                     if (hit) {
                         // 敵を撃破
                         enemy.isAlive = false;
-                        playerHP_ -= 10.0f;
+                        playerHP_ -= 35.0f; // 敵特攻の強化ダメージ
                         if (playerHP_ < 0.0f) playerHP_ = 0.0f;
 
                         // 被弾エフェクトとSE
                         EmitHitEffect(enemy.position);
-                        PlaySE(jumpSE_, false, 1.2f);
+                        if (particleManager_) {
+                            particleManager_->EmitCustomSparks(fighterWorldPos, 80.0f, 35, { 1.0f, 0.4f, 0.1f }, 1.0f);
+                            particleManager_->EmitRing(fighterWorldPos, { 1.0f, 0.2f, 0.1f });
+                        }
+                        cameraShakeTimer_ = 0.40f;
+                        cameraShakeIntensity_ = 4.5f;
+                        activeShakeIntensity_ = 4.5f;
+                        flashAlpha_ = 0.65f;
+                        flashColor_ = { 1.0f, 0.1f, 0.1f, 1.0f };
+                        PlaySE(jumpSE_, false, 1.8f);
                     }
                 }
             }
@@ -3881,6 +4016,7 @@ void GamePlayScene::Update() {
                     if (!enemy.isAlive) continue;
 
                     bool hit = false;
+
                     if (enemy.collider.hasCollider) {
                         hit = IsCollidingOBBAndSphere(playerBullets_[i].position, 2.5f, enemy.position, enemy.scale, enemy.rotate.y, enemy.collider.center, enemy.collider.size);
                     } else {
@@ -4128,7 +4264,16 @@ void GamePlayScene::Update() {
                             playerHP_ -= 25.0f;
                             if (playerHP_ < 0.0f) playerHP_ = 0.0f;
                             particleManager_->EmitHit(fighterWorldPos);
-                            PlaySE(jumpSE_, false, 1.2f);
+                            if (particleManager_) {
+                            particleManager_->EmitCustomSparks(fighterWorldPos, 80.0f, 35, { 1.0f, 0.4f, 0.1f }, 1.0f);
+                            particleManager_->EmitRing(fighterWorldPos, { 1.0f, 0.2f, 0.1f });
+                        }
+                        cameraShakeTimer_ = 0.40f;
+                        cameraShakeIntensity_ = 4.5f;
+                        activeShakeIntensity_ = 4.5f;
+                        flashAlpha_ = 0.65f;
+                        flashColor_ = { 1.0f, 0.1f, 0.1f, 1.0f };
+                        PlaySE(jumpSE_, false, 1.8f);
                         }
                     }
 
@@ -4789,7 +4934,7 @@ void GamePlayScene::Update() {
         Matrix4x4 uvTranslate = MakeScaleMatrix({ uvScale, uvScale, 1.0f });
 
         // 天球マテリアルのUVトランスフォームを更新
-        ID3D12Resource* materialRes = skydomeModel_->GetMaterialResource();
+        ID3D12Resource* materialRes = nullptr; // Initialize()で設定済みのため毎フレームのMap/Unmapをスキップ
         if (materialRes) {
             ::Material* materialData = nullptr;
             materialRes->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
@@ -4914,7 +5059,8 @@ void GamePlayScene::Update() {
                     enemy.position.z = enemy.wanderAnchor.z + std::sin(enemy.wanderPhase * 0.7f) * 3.0f;
 
                     // 中央出現から一定時間 (3.0秒) 経過したら特攻開始
-                    if (enemy.stateTimer >= 3.0f) {
+                    float diveTriggerTime = 1.4f + enemy.memberIndex * 0.22f;
+                    if (enemy.stateTimer >= diveTriggerTime) {
                         enemy.state = Enemy::State::kDive;
                         enemy.stateTimer = 0.0f;
                         // 自機位置に向けて特攻方向を計算 (Z追従を解除してその瞬間の位置へ突進)
@@ -4922,11 +5068,23 @@ void GamePlayScene::Update() {
                         Vector3 toPlayer = Subtract(playerTarget, enemy.position);
 
                         enemy.diveDirection = Normalize(toPlayer);
-                        enemy.speed = 85.0f + boostForwardSpeed_; // プレイヤーの速度に合わせて特攻速度を上げる (ブースト対応)
+                        enemy.speed = 95.0f + boostForwardSpeed_; // プレイヤーの速度に合わせて高速特攻
                     }
                 }
                 else if (enemy.state == Enemy::State::kDive) {
                     // 4. 特攻状態: プレイヤーに向けて直線的に高速突進 (Z追従なし)
+                    // 近距離まで自機位置へ滑らかに追尾補正
+                    Vector3 toPlayerNow = Subtract(fighterWorldPos, enemy.position);
+                    float distToPlayer = Length(toPlayerNow);
+                    if (distToPlayer > 6.0f) {
+                        Vector3 desiredDir = Normalize(toPlayerNow);
+                        Vector3 blended = {
+                            std::lerp(enemy.diveDirection.x, desiredDir.x, 0.05f),
+                            std::lerp(enemy.diveDirection.y, desiredDir.y, 0.05f),
+                            std::lerp(enemy.diveDirection.z, desiredDir.z, 0.05f)
+                        };
+                        enemy.diveDirection = Normalize(blended);
+                    }
                     enemy.position = Add(enemy.position, Scale(enemy.diveDirection, enemy.speed * kDeltaTime));
                     
                     // 特攻中の回転
@@ -5085,6 +5243,7 @@ void GamePlayScene::Update() {
     }
 
     // simpleSkinのスケルトンアニメーション更新
+    if (showSimpleSkin_) {
     cubeAnimationTime_ += kDeltaTime;
     cubeAnimationTime_ = std::fmod(cubeAnimationTime_, cubeAnimation_.duration);
 
@@ -5103,8 +5262,10 @@ void GamePlayScene::Update() {
     // 資料の指示により、スキニングモデルのWVPにはルートジョイントの行列を含めない
     cubeTransformData_->WVP = Multiply(cubeBaseWorldMatrix, viewProjectionMatrix);
     cubeTransformData_->World = cubeBaseWorldMatrix;
+    }
 
     // AnimatedCubeのアニメーション更新
+    if (showAnimatedCube_) {
     animatedCubeAnimationTime_ += kDeltaTime;
     animatedCubeAnimationTime_ = std::fmod(animatedCubeAnimationTime_, animatedCubeAnimation_.duration);
 
@@ -5127,6 +5288,7 @@ void GamePlayScene::Update() {
 
     animatedCubeTransformData_->WVP = Multiply(animatedCubeBaseWorldMatrix, viewProjectionMatrix);
     animatedCubeTransformData_->World = animatedCubeBaseWorldMatrix;
+    }
 
     // ── ビルと床(Plane)の更新・再配置（オブジェクトプール） ──
     // ボス戦中もビルの物理シミュレーション・衝突判定・行列計算を更新する。
@@ -5244,11 +5406,24 @@ void GamePlayScene::Update() {
                             buildings_[i].floors = 6 + (i % 7);
                         }
                         buildings_[i].originalFloors = buildings_[i].floors;
+
+                        Vector3 railPos = GetRailPosition(buildings_[i].railProgress);
+                        Vector3 railDir = GetRailDirection(buildings_[i].railProgress);
+                        Vector3 railRight = CalculateRailRight(railDir);
+                        float noiseX = std::sin(static_cast<float>(i) * 0.5f) * 3.0f;
+                        float noiseZ = std::cos(static_cast<float>(i) * 0.3f) * 3.0f;
+                        Vector3 targetPos = Add(railPos, Scale(railRight, offsetX + noiseX));
+                        targetPos.y = -20.0f;
+                        targetPos = Add(targetPos, Scale(railDir, noiseZ));
+                        buildings_[i].position = targetPos;
+                        float rotY = std::atan2(railDir.x, railDir.z);
+                        buildings_[i].rotate = { 0.0f, rotY, 0.0f };
+                        buildings_[i].isWorldMatrixCached = false;
                     }
                     
                     // 破壊されていないときのみ、現在設定されている railProgress の静止座標に固定する
                     // （破壊されているときは、物理シミュレーションによる吹き飛び移動を優先する）
-                    if (!buildings_[i].isDestroyed) {
+                    if (false) { // ワープ時以外は静止座標を維持し毎フレームの再計算をスキップ
                         Vector3 railPos = GetRailPosition(buildings_[i].railProgress);
                         Vector3 railDir = GetRailDirection(buildings_[i].railProgress);
                         Vector3 railRight = CalculateRailRight(railDir);
@@ -5337,6 +5512,7 @@ void GamePlayScene::Update() {
             Vector3 refCamPos = (isBossIntro || isTitleMode_) ? GetRailPosition((std::max)(0.0f, fighterWorldZ_ - 65.0f)) : camera_->GetTransform().translate;
             float camZ = refCamPos.z;
             float camX = refCamPos.x;
+            const Matrix4x4& viewMatrix = camera_->GetViewMatrix();
 
             for (size_t i = 0; i < buildings_.size(); ++i) {
                 buildings_[i].cbIndexStart = -1;
@@ -5359,7 +5535,18 @@ void GamePlayScene::Update() {
                 }
 
                 // プレイヤーが通るルート近傍および直進延長上のビル(isNearCourseColumn)は視界限界(kBuildingCullFarDist)まで常に詳細描画（荒くしない）
-                bool isDetailView = buildings_[i].isNearCourseColumn ||
+                // ビュー空間フラスタムカリング（カメラ後方および画角外のビルを除外）
+                float vz = 0.0f;
+                if (!isBossIntro) {
+                    float vx = buildings_[i].position.x * viewMatrix.m[0][0] + buildings_[i].position.y * viewMatrix.m[1][0] + buildings_[i].position.z * viewMatrix.m[2][0] + viewMatrix.m[3][0];
+                    vz = buildings_[i].position.x * viewMatrix.m[0][2] + buildings_[i].position.y * viewMatrix.m[1][2] + buildings_[i].position.z * viewMatrix.m[2][2] + viewMatrix.m[3][2];
+                    if (vz < -80.0f || vz > 1800.0f || std::abs(vx) > vz * 0.95f + 140.0f) {
+                        continue;
+                    }
+                }
+
+                // プレイヤーが通るルート近傍および直進延長上のビル(isNearCourseColumn)は近距離(550m以内)のみ詳細描画、それ以遠は統合1ドローで高速化
+                bool isDetailView = (buildings_[i].isNearCourseColumn && vz <= 550.0f) ||
                                     buildings_[i].isDestroyed ||
                                     (distSq <= 120.0f * 120.0f);
 
@@ -5432,6 +5619,10 @@ void GamePlayScene::Update() {
                                 alpha = 0.25f;
                             }
                         }
+                    }
+
+                    if (alpha <= 0.01f) {
+                        continue;
                     }
 
                     // ワールド行列の初期化キャッシュ（破壊されていない静的ビル用）
@@ -5533,16 +5724,33 @@ void GamePlayScene::Update() {
             bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
             Vector3 refCamPos = (isBossIntro || isTitleMode_) ? GetRailPosition((std::max)(0.0f, fighterWorldZ_ - 65.0f)) : camera_->GetTransform().translate;
             float camX = refCamPos.x;
+            const Matrix4x4& viewMatrix = camera_->GetViewMatrix();
             float camZ = refCamPos.z;
             const float kFloorFarDistSq = kFloorCullFarDist * kFloorCullFarDist;
 
+            visibleDouroFloors_.clear();
+            visibleJuziroFloors_.clear();
+
             for (int i = 0; i < numLoadedFloors_; ++i) {
+                if (floorPositions_[i].y < -5000.0f) continue;
                 float dx = floorPositions_[i].x - camX;
                 float dz = floorPositions_[i].z - camZ;
                 if (dx * dx + dz * dz > kFloorFarDistSq) continue;
 
+                if (!isBossIntro) {
+                    float vx = floorPositions_[i].x * viewMatrix.m[0][0] + floorPositions_[i].y * viewMatrix.m[1][0] + floorPositions_[i].z * viewMatrix.m[2][0] + viewMatrix.m[3][0];
+                    float vz = floorPositions_[i].x * viewMatrix.m[0][2] + floorPositions_[i].y * viewMatrix.m[1][2] + floorPositions_[i].z * viewMatrix.m[2][2] + viewMatrix.m[3][2];
+                    if (vz < -80.0f || vz > 2200.0f || std::abs(vx) > vz * 0.95f + 150.0f) continue;
+                }
+
                 if (floorTransformData_[i]) {
                     floorTransformData_[i]->WVP = Multiply(floorWorldMatrices_[i], viewProjectionMatrix);
+                }
+
+                if (floorIsJuziro_[i] == 1) {
+                    visibleJuziroFloors_.push_back(i);
+                } else {
+                    visibleDouroFloors_.push_back(i);
                 }
             }
         }
@@ -5739,6 +5947,7 @@ void GamePlayScene::Update() {
     }
 
     // ── 蜘蛛の巣弾（3Dビルボード）の更新・行列計算 ──
+    activeWebBulletCount_ = 0;
     if (webBulletInstancingData_) {
         Matrix4x4 viewProj = camera_->GetViewProjectionMatrix();
         Matrix4x4 billboard = camera_->GetBillboardMatrix();
@@ -5751,14 +5960,11 @@ void GamePlayScene::Update() {
                 world.m[3][1] = bossWebBullets_[i].position.y;
                 world.m[3][2] = bossWebBullets_[i].position.z;
 
-                webBulletInstancingData_[i].World = world;
-                webBulletInstancingData_[i].WVP = Multiply(world, viewProj);
-                webBulletInstancingData_[i].color = { 1.0f, 1.0f, 1.0f, 1.0f };
-                webBulletInstancingData_[i].uvTransform = MakeIdentity4x4();
-            } else {
-                webBulletInstancingData_[i].World = MakeIdentity4x4();
-                webBulletInstancingData_[i].WVP = MakeIdentity4x4();
-                webBulletInstancingData_[i].color.w = 0.0f;
+                webBulletInstancingData_[activeWebBulletCount_].World = world;
+                webBulletInstancingData_[activeWebBulletCount_].WVP = Multiply(world, viewProj);
+                webBulletInstancingData_[activeWebBulletCount_].color = { 1.0f, 1.0f, 1.0f, 1.0f };
+                webBulletInstancingData_[activeWebBulletCount_].uvTransform = MakeIdentity4x4();
+                activeWebBulletCount_++;
             }
         }
     }
@@ -5789,6 +5995,7 @@ void GamePlayScene::Update() {
     }
 
     // ── 墜落黒煙パーティクル（3Dビルボード）の更新・行列計算 ──
+    activeSmokeCount_ = 0;
     if (smokeInstancingData_) {
         Matrix4x4 viewProj = camera_->GetViewProjectionMatrix();
         Matrix4x4 billboard = camera_->GetBillboardMatrix();
@@ -5797,10 +6004,6 @@ void GamePlayScene::Update() {
             if (smokeParticles_[i].currentTime < smokeParticles_[i].lifeTime) {
                 smokeParticles_[i].currentTime += kDeltaTime;
                 if (smokeParticles_[i].currentTime >= smokeParticles_[i].lifeTime) {
-                    smokeInstancingData_[i].World = MakeIdentity4x4();
-                    smokeInstancingData_[i].WVP = MakeIdentity4x4();
-                    smokeInstancingData_[i].color = { 0.0f, 0.0f, 0.0f, 0.0f };
-                    smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
                     continue;
                 }
 
@@ -5828,20 +6031,16 @@ void GamePlayScene::Update() {
                 world.m[3][1] = smokeParticles_[i].position.y;
                 world.m[3][2] = smokeParticles_[i].position.z;
 
-                smokeInstancingData_[i].World = world;
-                smokeInstancingData_[i].WVP = Multiply(world, viewProj);
-                smokeInstancingData_[i].color = {
+                smokeInstancingData_[activeSmokeCount_].World = world;
+                smokeInstancingData_[activeSmokeCount_].WVP = Multiply(world, viewProj);
+                smokeInstancingData_[activeSmokeCount_].color = {
                     smokeParticles_[i].color.x,
                     smokeParticles_[i].color.y,
                     smokeParticles_[i].color.z,
                     alpha
                 };
-                smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
-            } else {
-                smokeInstancingData_[i].World = MakeIdentity4x4();
-                smokeInstancingData_[i].WVP = MakeIdentity4x4();
-                smokeInstancingData_[i].color = { 0.0f, 0.0f, 0.0f, 0.0f };
-                smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
+                smokeInstancingData_[activeSmokeCount_].uvTransform = MakeIdentity4x4();
+                activeSmokeCount_++;
             }
         }
     }
@@ -5989,21 +6188,9 @@ void GamePlayScene::Draw() {
                 D3D12_GPU_DESCRIPTOR_HANDLE juziroSrv = TextureManager::GetInstance()->GetSrvHandleGPU("juziro.jpg");
                 D3D12_GPU_DESCRIPTOR_HANDLE testSrv = TextureManager::GetInstance()->GetSrvHandleGPU("test.dds");
 
-                bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
-                Vector3 refCamPos = (isBossIntro || isTitleMode_) ? GetRailPosition((std::max)(0.0f, fighterWorldZ_ - 65.0f)) : camera_->GetTransform().translate;
-                float camX = refCamPos.x;
-                float camZ = refCamPos.z;
-                const float kFloorFarDistSq = kFloorCullFarDist * kFloorCullFarDist;
-
                 // 1. 通常道路 (douro.jpg)
                 floorModel_->PrepareDraw(commandList, douroSrv, testSrv);
-                for (int i = 0; i < numLoadedFloors_; ++i) {
-                    if (floorIsJuziro_[i] == 1) continue;
-                    if (floorPositions_[i].y < -5000.0f) continue;
-                    float dx = floorPositions_[i].x - camX;
-                    float dz = floorPositions_[i].z - camZ;
-                    if (dx * dx + dz * dz > kFloorFarDistSq) continue;
-
+                for (int i : visibleDouroFloors_) {
                     D3D12_GPU_VIRTUAL_ADDRESS cbAddr = floorTransformBufferResource_ ? 
                         (floorTransformBufferResource_->GetGPUVirtualAddress() + i * 256) : 
                         floorTransformResources_[i]->GetGPUVirtualAddress();
@@ -6013,13 +6200,7 @@ void GamePlayScene::Draw() {
 
                 // 2. 十字路 (juziro.jpg)
                 floorModel_->PrepareDraw(commandList, juziroSrv, testSrv);
-                for (int i = 0; i < numLoadedFloors_; ++i) {
-                    if (floorIsJuziro_[i] != 1) continue;
-                    if (floorPositions_[i].y < -5000.0f) continue;
-                    float dx = floorPositions_[i].x - camX;
-                    float dz = floorPositions_[i].z - camZ;
-                    if (dx * dx + dz * dz > kFloorFarDistSq) continue;
-
+                for (int i : visibleJuziroFloors_) {
                     D3D12_GPU_VIRTUAL_ADDRESS cbAddr = floorTransformBufferResource_ ? 
                         (floorTransformBufferResource_->GetGPUVirtualAddress() + i * 256) : 
                         floorTransformResources_[i]->GetGPUVirtualAddress();
@@ -6080,40 +6261,52 @@ void GamePlayScene::Draw() {
             if (debugBoxModel_) {
                 D3D12_GPU_DESCRIPTOR_HANDLE whiteSrv = TextureManager::GetInstance()->GetSrvHandleGPU("human/white.png");
                 D3D12_GPU_DESCRIPTOR_HANDLE testSrv = TextureManager::GetInstance()->GetSrvHandleGPU("test.dds");
-
-                // 1. 外殻（鮮烈な蛍光レッドオーラ）
-                debugBoxModel_->SetColor({ 1.0f, 0.05f, 0.15f, 1.0f });
-                debugBoxModel_->PrepareDraw(commandList, whiteSrv, testSrv);
-
+                bool anyBulletAlive = false;
                 for (int i = 0; i < kMaxBullets; ++i) {
                     if (playerBullets_[i].currentTime < playerBullets_[i].lifeTime) {
-                        commandList->SetGraphicsRootConstantBufferView(1, bulletTransformResources_[i]->GetGPUVirtualAddress());
-                        debugBoxModel_->DrawPrepared(commandList);
+                        anyBulletAlive = true;
+                        break;
                     }
                 }
 
-                // 2. 内核（中心のホワイト発光コア）
-                debugBoxModel_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
-                debugBoxModel_->PrepareDraw(commandList, whiteSrv, testSrv);
+                if (anyBulletAlive) {
 
-                for (int i = 0; i < kMaxBullets; ++i) {
-                    if (playerBullets_[i].currentTime < playerBullets_[i].lifeTime) {
-                        Matrix4x4 origWorld = bulletTransformData_[i]->World;
-                        Vector3 vel = playerBullets_[i].velocity;
-                        Vector3 dir = Normalize(vel);
-                        Matrix4x4 rotMatrix = MakeLookRotationMatrix(dir);
-                        Vector3 scaleInner = { 1.1f, 1.1f, 5.0f }; // 内核用スケール
-                        Matrix4x4 worldInner = Multiply(Multiply(MakeScaleMatrix(scaleInner), rotMatrix), MakeTranslateMatrix(playerBullets_[i].position));
 
-                        bulletTransformData_[i]->World = worldInner;
-                        bulletTransformData_[i]->WVP = Multiply(worldInner, camera_->GetViewProjectionMatrix());
 
-                        commandList->SetGraphicsRootConstantBufferView(1, bulletTransformResources_[i]->GetGPUVirtualAddress());
-                        debugBoxModel_->DrawPrepared(commandList);
+                    // 1. 外殻（鮮烈な蛍光レッドオーラ）
+                    debugBoxModel_->SetColor({ 1.0f, 0.05f, 0.15f, 1.0f });
+                    debugBoxModel_->PrepareDraw(commandList, whiteSrv, testSrv);
 
-                        // 元の外殻行列に戻す
-                        bulletTransformData_[i]->World = origWorld;
-                        bulletTransformData_[i]->WVP = Multiply(origWorld, camera_->GetViewProjectionMatrix());
+                    for (int i = 0; i < kMaxBullets; ++i) {
+                        if (playerBullets_[i].currentTime < playerBullets_[i].lifeTime) {
+                            commandList->SetGraphicsRootConstantBufferView(1, bulletTransformResources_[i]->GetGPUVirtualAddress());
+                            debugBoxModel_->DrawPrepared(commandList);
+                        }
+                    }
+
+                    // 2. 内核（中心のホワイト発光コア）
+                    debugBoxModel_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+                    debugBoxModel_->PrepareDraw(commandList, whiteSrv, testSrv);
+
+                    for (int i = 0; i < kMaxBullets; ++i) {
+                        if (playerBullets_[i].currentTime < playerBullets_[i].lifeTime) {
+                            Matrix4x4 origWorld = bulletTransformData_[i]->World;
+                            Vector3 vel = playerBullets_[i].velocity;
+                            Vector3 dir = Normalize(vel);
+                            Matrix4x4 rotMatrix = MakeLookRotationMatrix(dir);
+                            Vector3 scaleInner = { 1.1f, 1.1f, 5.0f }; // 内核用スケール
+                            Matrix4x4 worldInner = Multiply(Multiply(MakeScaleMatrix(scaleInner), rotMatrix), MakeTranslateMatrix(playerBullets_[i].position));
+
+                            bulletTransformData_[i]->World = worldInner;
+                            bulletTransformData_[i]->WVP = Multiply(worldInner, camera_->GetViewProjectionMatrix());
+
+                            commandList->SetGraphicsRootConstantBufferView(1, bulletTransformResources_[i]->GetGPUVirtualAddress());
+                            debugBoxModel_->DrawPrepared(commandList);
+
+                            // 元の外殻行列に戻す
+                            bulletTransformData_[i]->World = origWorld;
+                            bulletTransformData_[i]->WVP = Multiply(origWorld, camera_->GetViewProjectionMatrix());
+                        }
                     }
                 }
 
@@ -6208,25 +6401,25 @@ void GamePlayScene::Draw() {
         }
 
         // 蜘蛛の巣弾（3Dビルボード）の描画
-        if (currentPhase_ == GamePhase::kBossFight && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
+        if (currentPhase_ == GamePhase::kBossFight && activeWebBulletCount_ > 0 && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
             commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             if (graphicsPipeline_->GetPipelineState(kBlendModeNormal)) {
                 commandList->SetPipelineState(graphicsPipeline_->GetPipelineState(kBlendModeNormal));
                 if (particleModel_) {
-                    particleModel_->Draw(commandList, kMaxWebBullets, spiderWebSrvHandleGPU_, webBulletInstancingSrvHandleGPU_);
+                    particleModel_->Draw(commandList, activeWebBulletCount_, spiderWebSrvHandleGPU_, webBulletInstancingSrvHandleGPU_);
                 }
             }
         }
 
         // 墜落黒煙パーティクル（3Dビルボード）の描画 (Normalブレンドで背景を遮るリアルな黒煙を表現)
-        if (graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
+        if (activeSmokeCount_ > 0 && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
             commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             if (graphicsPipeline_->GetPipelineState(kBlendModeNormal)) {
                 commandList->SetPipelineState(graphicsPipeline_->GetPipelineState(kBlendModeNormal));
                 if (particleModel_) {
-                    particleModel_->Draw(commandList, kMaxSmokeParticles, TextureManager::GetInstance()->GetSrvHandleGPU("circle2.png"), smokeInstancingSrvHandleGPU_);
+                    particleModel_->Draw(commandList, activeSmokeCount_, TextureManager::GetInstance()->GetSrvHandleGPU("circle2.png"), smokeInstancingSrvHandleGPU_);
                 }
             }
         }

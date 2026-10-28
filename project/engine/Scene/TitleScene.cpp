@@ -10,6 +10,7 @@ void TitleScene::Initialize() {
     SceneManager::GetInstance()->ClearPreviousScene();
 
     inputDelay_ = 24; // 起動時等の誤トリガーを防ぐため、開始時はディレイを設ける
+    autoStartTimer_ = 0.0f;
 
     input_ = Input::GetInstance();
     graphicsPipeline_ = GraphicsPipeline::GetInstance();
@@ -24,6 +25,10 @@ void TitleScene::Initialize() {
     gameplayScene_->SetTitleMode(true);
     gameplayScene_->Initialize();
 
+    if (!device || FAILED(device->GetDeviceRemovedReason())) {
+        return;
+    }
+
     camera_ = std::make_unique<Camera>(WinApp::kClientWidth, WinApp::kClientHeight);
     camera_->SetTranslate({ 0.0f, 0.0f, -40.0f });
 
@@ -33,27 +38,41 @@ void TitleScene::Initialize() {
 
     // モデル読み込み
     titleModel_ = Model::LoadGLTF("Resources/Title/Title.obj", device);
-    titleModel_->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f }); // 文字モデルの色を赤に設定
-    titleModel_->transform.scale = { 1.2f, 1.2f, 1.2f }; // サイズを大きく
-    titleModel_->transform.rotate = { 0.0f, 0.0f, 0.0f }; // 反転を直すための回転を解除
-    titleModel_->transform.translate = { 0.0f, 0.0f, 20.0f }; // 遠く、中央付近に配置
+    if (titleModel_) {
+        titleModel_->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f }); // 文字モデルの色を赤に設定
+        titleModel_->transform.scale = { 1.2f, 1.2f, 1.2f }; // サイズを大きく
+        titleModel_->transform.rotate = { 0.0f, 0.0f, 0.0f }; // 反転を直すための回転を解除
+        titleModel_->transform.translate = { 0.0f, 0.0f, 20.0f }; // 遠く、中央付近に配置
+    }
 
     // 定数バッファの作成
     transformResource_ = CreateBufferResource(device, sizeof(TransformationMatrix));
-    transformResource_->Map(0, nullptr, reinterpret_cast<void**>(&transformData_));
-    transformData_->WVP = MakeIdentity4x4();
-    transformData_->World = MakeIdentity4x4();
-    transformData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    if (transformResource_) {
+        transformResource_->Map(0, nullptr, reinterpret_cast<void**>(&transformData_));
+        if (transformData_) {
+            transformData_->WVP = MakeIdentity4x4();
+            transformData_->World = MakeIdentity4x4();
+            transformData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+        }
+    }
 
     directionalLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
-    directionalLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData_));
-    directionalLightData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    directionalLightData_->direction = Normalize({ 0.0f, -1.0f, 1.0f });
-    directionalLightData_->intensity = 1.8f; // タイトル文字がはっきり見えるように強度を上げる
+    if (directionalLightResource_) {
+        directionalLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData_));
+        if (directionalLightData_) {
+            directionalLightData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+            directionalLightData_->direction = Normalize({ 0.0f, -1.0f, 1.0f });
+            directionalLightData_->intensity = 1.8f; // タイトル文字がはっきり見えるように強度を上げる
+        }
+    }
 
     cameraResource_ = CreateBufferResource(device, sizeof(CameraDataCB));
-    cameraResource_->Map(0, nullptr, reinterpret_cast<void**>(&cameraDataCB_));
-    cameraDataCB_->worldPosition = camera_->GetTransform().translate;
+    if (cameraResource_) {
+        cameraResource_->Map(0, nullptr, reinterpret_cast<void**>(&cameraDataCB_));
+        if (cameraDataCB_) {
+            cameraDataCB_->worldPosition = camera_->GetTransform().translate;
+        }
+    }
 }
 
 void TitleScene::Finalize() {
@@ -81,7 +100,9 @@ void TitleScene::Update() {
     if (inputDelay_ > 0) {
         inputDelay_--;
     } else {
-        if (!isTransitioningToGame_ && input_->IsKeyTriggered(DIK_SPACE)) {
+        autoStartTimer_ += 1.0f / 60.0f;
+        bool shouldStart = input_->IsKeyTriggered(DIK_SPACE) || (autoStartTimer_ >= kAutoStartTime_);
+        if (!isTransitioningToGame_ && shouldStart) {
             isTransitioningToGame_ = true;
             transitionTimer_ = 0.0f;
             if (gameplayScene_) {

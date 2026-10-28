@@ -57,7 +57,8 @@ void SceneManager::Update() {
     if (!isLoading_ && nextScene_) {
         ClearPreviousScene();
         if (currentScene_) {
-            previousScene_ = std::move(currentScene_);
+            currentScene_->Finalize();
+            currentScene_.reset();
         }
         currentScene_ = std::move(nextScene_);
         if (currentScene_) {
@@ -78,6 +79,11 @@ void SceneManager::Update() {
                 loadProgress_ = 0.60f;
             } else if (!isLoadCompleted_) {
                 loadProgress_ = 0.85f;
+                ClearPreviousScene();
+                if (currentScene_) {
+                    currentScene_->Finalize();
+                    currentScene_.reset();
+                }
                 if (nextScene_) {
                     nextScene_->Initialize();
                 }
@@ -156,4 +162,21 @@ void SceneManager::ClearPreviousScene() {
         previousScene_->Finalize();
         previousScene_.reset();
     }
+}
+
+void SceneManager::Reset() {
+    ClearPreviousScene();
+    if (nextScene_) {
+        nextScene_->Finalize();
+        nextScene_.reset();
+    }
+    if (currentScene_) {
+        currentScene_->Finalize();
+        currentScene_.reset();
+    }
+    currentSceneName_.clear();
+    previousSceneName_.clear();
+    isLoading_ = false;
+    loadProgress_ = 0.0f;
+    isLoadCompleted_ = false;
 }

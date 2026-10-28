@@ -80,10 +80,16 @@ namespace AdvAnim {
     }
 
     AnimatedModel LoadModelFile(const std::string& directoryPath, const std::string& filename) {
+        static std::map<std::string, AnimatedModel> s_modelCache;
+        std::string filePath = directoryPath + "/" + filename;
+        auto cacheIt = s_modelCache.find(filePath);
+        if (cacheIt != s_modelCache.end()) {
+            return cacheIt->second;
+        }
+
         AnimatedModel model;
         Assimp::Importer importer;
-        std::string filePath = directoryPath + "/" + filename;
-        const aiScene* scene = importer.ReadFile(filePath.c_str(), aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals | aiProcess_LimitBoneWeights | aiProcess_ConvertToLeftHanded | aiProcess_PopulateArmatureData);
+        const aiScene* scene = importer.ReadFile(filePath.c_str(), aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals | aiProcess_JoinIdenticalVertices | aiProcess_LimitBoneWeights | aiProcess_ConvertToLeftHanded | aiProcess_PopulateArmatureData);
 
         if (!scene || !scene->mRootNode) {
             return model;
@@ -145,13 +151,20 @@ namespace AdvAnim {
         // ノード階層の読み込み
         ReadNodeHierarchy(scene->mRootNode, model.rootNode);
 
+        s_modelCache[filePath] = model;
         return model;
     }
 
     Animation LoadAnimationFile(const std::string& directoryPath, const std::string& filename) {
+        static std::map<std::string, Animation> s_animCache;
+        std::string filePath = directoryPath + "/" + filename;
+        auto cacheIt = s_animCache.find(filePath);
+        if (cacheIt != s_animCache.end()) {
+            return cacheIt->second;
+        }
+
         Animation animation; // 今回作るアニメーション
         Assimp::Importer importer;
-        std::string filePath = directoryPath + "/" + filename;
         const aiScene* scene = importer.ReadFile(filePath.c_str(), aiProcess_ConvertToLeftHanded);
         
         if (!scene || scene->mNumAnimations == 0) {
@@ -193,6 +206,7 @@ namespace AdvAnim {
             }
         }
 
+        s_animCache[filePath] = animation;
         return animation;
     }
 
@@ -236,9 +250,15 @@ namespace AdvAnim {
         uint32_t descriptorSize) {
         
         SkinCluster skinCluster;
+        if (!device || FAILED(device->GetDeviceRemovedReason())) {
+            return skinCluster;
+        }
 
         // palette用リソースの確保
         skinCluster.paletteResource = CreateBufferResource(device, sizeof(WellForGPU) * skeleton.joints.size());
+        if (!skinCluster.paletteResource) {
+            return skinCluster;
+        }
         WellForGPU* mappedPalette = nullptr;
         skinCluster.paletteResource->Map(0, nullptr, reinterpret_cast<void**>(&mappedPalette));
         skinCluster.mappedPalette = { mappedPalette, skeleton.joints.size() };

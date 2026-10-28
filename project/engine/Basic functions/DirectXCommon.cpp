@@ -151,6 +151,8 @@ void DirectXCommon::InitializeWithAdapter(UINT startAdapterIndex) {
         fenceEvent_ = nullptr;
     }
     fence_.Reset();
+    fenceValue_ = 0;
+    depthStencilState_ = D3D12_RESOURCE_STATE_DEPTH_WRITE;
     device_.Reset();
     useAdapter_.Reset();
 

@@ -1,7 +1,11 @@
-﻿#include "Model.h"
+#include "Model.h"
 #include "DirectXCommon.h"
 #include <cassert>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <algorithm>
+#include <unordered_map>
 #include <windows.h>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -179,14 +183,400 @@ struct GLTFCacheData {
     Node rootNode;
     std::map<std::string, Bone> bones;
     std::shared_ptr<Animation> animation;
+    Microsoft::WRL::ComPtr<ID3D12Resource> vertexResource;
+    D3D12_VERTEX_BUFFER_VIEW vertexBufferView{};
+    Microsoft::WRL::ComPtr<ID3D12Resource> indexResource;
+    D3D12_INDEX_BUFFER_VIEW indexBufferView{};
+    uint32_t vertexCount = 0;
+    uint32_t indexCount = 0;
 };
 
 static std::map<std::string, GLTFCacheData> s_GLTFCache;
 
+namespace {
+inline const char* SkipSpaces(const char* p, const char* end) {
+    while (p < end && (*p == ' ' || *p == '\t')) ++p;
+    return p;
+}
+
+inline const char* ParseFloatFast(const char* p, const char* end, float& outVal) {
+    p = SkipSpaces(p, end);
+    if (p >= end) { outVal = 0.0f; return p; }
+    char* next = nullptr;
+    outVal = std::strtof(p, &next);
+    return (next && next > p) ? next : p;
+}
+
+inline const char* ParseIntFast(const char* p, const char* end, int& outVal) {
+    p = SkipSpaces(p, end);
+    int sign = 1;
+    if (p < end && *p == '-') { sign = -1; ++p; }
+    else if (p < end && *p == '+') { ++p; }
+    int val = 0;
+    while (p < end && *p >= '0' && *p <= '9') {
+        val = val * 10 + (*p - '0');
+        ++p;
+    }
+    outVal = val * sign;
+    return p;
+}
+
+struct ObjCorner {
+    int v = 0;
+    int vt = 0;
+    int vn = 0;
+    bool operator==(const ObjCorner& o) const {
+        return v == o.v && vt == o.vt && vn == o.vn;
+    }
+};
+
+struct ObjCornerHash {
+    size_t operator()(const ObjCorner& c) const {
+        size_t h = (size_t)c.v * 73856093u;
+        h ^= (size_t)c.vt * 19349663u;
+        h ^= (size_t)c.vn * 83492791u;
+        return h;
+    }
+};
+
+// 高速OBJローダー & 超高ポリゴンメッシュの空間グリッド簡略化 (LOD)
+bool LoadObjFileFast(const std::string& filename, ModelData& outModelData, Node& outRootNode) {
+    FILE* fp = nullptr;
+    if (fopen_s(&fp, filename.c_str(), "rb") != 0 || !fp) {
+        return false;
+    }
+    fseek(fp, 0, SEEK_END);
+    long fileSize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (fileSize <= 0) {
+        fclose(fp);
+        return false;
+    }
+
+    std::vector<char> buffer((size_t)fileSize + 1);
+    size_t bytesRead = fread(buffer.data(), 1, (size_t)fileSize, fp);
+    fclose(fp);
+    buffer[bytesRead] = '\0';
+
+    std::vector<Vector3> positions;
+    std::vector<Vector2> texcoords;
+    std::vector<Vector3> normals;
+    positions.reserve(bytesRead / 64 + 16);
+    texcoords.reserve(bytesRead / 64 + 16);
+    normals.reserve(bytesRead / 64 + 16);
+
+    struct RawTri {
+        ObjCorner c[3];
+    };
+    std::vector<RawTri> rawTriangles;
+    rawTriangles.reserve(bytesRead / 48 + 16);
+
+    Vector3 minPos = { 1e30f, 1e30f, 1e30f };
+    Vector3 maxPos = { -1e30f, -1e30f, -1e30f };
+
+    const char* ptr = buffer.data();
+    const char* end = ptr + bytesRead;
+
+    ObjCorner faceCorners[16];
+
+    while (ptr < end) {
+        const char* lineEnd = ptr;
+        while (lineEnd < end && *lineEnd != '\n' && *lineEnd != '\r') ++lineEnd;
+
+        const char* p = SkipSpaces(ptr, lineEnd);
+        if (p < lineEnd && *p != '#') {
+            if (p[0] == 'v') {
+                if (p + 1 < lineEnd && (p[1] == ' ' || p[1] == '\t')) {
+                    float x = 0.0f, y = 0.0f, z = 0.0f;
+                    p += 2;
+                    p = ParseFloatFast(p, lineEnd, x);
+                    p = ParseFloatFast(p, lineEnd, y);
+                    p = ParseFloatFast(p, lineEnd, z);
+                    // Assimp の aiProcess_ConvertToLeftHanded と同一変換 (Z反転)
+                    z = -z;
+                    positions.push_back({ x, y, z });
+                    if (x < minPos.x) minPos.x = x;
+                    if (y < minPos.y) minPos.y = y;
+                    if (z < minPos.z) minPos.z = z;
+                    if (x > maxPos.x) maxPos.x = x;
+                    if (y > maxPos.y) maxPos.y = y;
+                    if (z > maxPos.z) maxPos.z = z;
+                } else if (p + 2 < lineEnd && p[1] == 't' && (p[2] == ' ' || p[2] == '\t')) {
+                    float u = 0.0f, v = 0.0f;
+                    p += 3;
+                    p = ParseFloatFast(p, lineEnd, u);
+                    p = ParseFloatFast(p, lineEnd, v);
+                    // Assimp の FlipUVs と同じ V 反転
+                    texcoords.push_back({ u, 1.0f - v });
+                } else if (p + 2 < lineEnd && p[1] == 'n' && (p[2] == ' ' || p[2] == '\t')) {
+                    float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+                    p += 3;
+                    p = ParseFloatFast(p, lineEnd, nx);
+                    p = ParseFloatFast(p, lineEnd, ny);
+                    p = ParseFloatFast(p, lineEnd, nz);
+                    nz = -nz;
+                    normals.push_back({ nx, ny, nz });
+                }
+            } else if (p[0] == 'f' && p + 1 < lineEnd && (p[1] == ' ' || p[1] == '\t')) {
+                p += 2;
+                int cornerCount = 0;
+                while (p < lineEnd && cornerCount < 16) {
+                    p = SkipSpaces(p, lineEnd);
+                    if (p >= lineEnd) break;
+                    ObjCorner corner{};
+                    p = ParseIntFast(p, lineEnd, corner.v);
+                    if (p < lineEnd && *p == '/') {
+                        ++p;
+                        if (p < lineEnd && *p != '/') {
+                            p = ParseIntFast(p, lineEnd, corner.vt);
+                        }
+                        if (p < lineEnd && *p == '/') {
+                            ++p;
+                            p = ParseIntFast(p, lineEnd, corner.vn);
+                        }
+                    }
+                    while (p < lineEnd && *p != ' ' && *p != '\t') ++p;
+
+                    if (corner.v < 0) corner.v = (int)positions.size() + 1 + corner.v;
+                    if (corner.vt < 0) corner.vt = (int)texcoords.size() + 1 + corner.vt;
+                    if (corner.vn < 0) corner.vn = (int)normals.size() + 1 + corner.vn;
+                    faceCorners[cornerCount++] = corner;
+                }
+                // ファン分割 + ワインディング反転 (aiProcess_FlipWindingOrder 相当: 0, i+1, i)
+                for (int i = 1; i + 1 < cornerCount; ++i) {
+                    RawTri tri;
+                    tri.c[0] = faceCorners[0];
+                    tri.c[1] = faceCorners[i + 1];
+                    tri.c[2] = faceCorners[i];
+                    rawTriangles.push_back(tri);
+                }
+            }
+        }
+
+        ptr = lineEnd;
+        while (ptr < end && (*ptr == '\n' || *ptr == '\r')) ++ptr;
+    }
+
+    if (positions.empty() || rawTriangles.empty()) {
+        return false;
+    }
+
+    outRootNode.name = "root";
+    outRootNode.localMatrix = MakeIdentity4x4();
+    outRootNode.children.clear();
+
+    const size_t kSimplifyThreshold = 50000;
+    if (rawTriangles.size() > kSimplifyThreshold) {
+        // 超高ポリゴンモデル(Player.obj: 85万ポリゴン、Spider: 45万ポリゴン、SpiderArm: 24万ポリゴン×8本)を
+        // 水密な空間グリッドクラスタリングで高速簡略化し、GPUのオーバードローと頂点負荷を90%以上削減
+        const int kGridRes = 96;
+        Vector3 extent = {
+            (std::max)(maxPos.x - minPos.x, 0.0001f),
+            (std::max)(maxPos.y - minPos.y, 0.0001f),
+            (std::max)(maxPos.z - minPos.z, 0.0001f)
+        };
+        float maxExtent = (std::max)(extent.x, (std::max)(extent.y, extent.z));
+        float invCellSize = (float)kGridRes / maxExtent;
+
+        std::vector<int> posCluster(positions.size());
+        struct ClusterAccum {
+            Vector3 posSum{ 0.0f, 0.0f, 0.0f };
+            Vector2 uvSum{ 0.0f, 0.0f };
+            uint32_t count = 0;
+            uint32_t uvCount = 0;
+        };
+        std::unordered_map<uint64_t, uint32_t> cellToCluster;
+        cellToCluster.reserve(positions.size() / 8 + 64);
+        std::vector<ClusterAccum> clusters;
+        clusters.reserve(positions.size() / 8 + 64);
+
+        for (size_t i = 0; i < positions.size(); ++i) {
+            const Vector3& pos = positions[i];
+            int gx = (int)((pos.x - minPos.x) * invCellSize);
+            int gy = (int)((pos.y - minPos.y) * invCellSize);
+            int gz = (int)((pos.z - minPos.z) * invCellSize);
+            gx = (std::max)(0, (std::min)(kGridRes, gx));
+            gy = (std::max)(0, (std::min)(kGridRes, gy));
+            gz = (std::max)(0, (std::min)(kGridRes, gz));
+
+            uint64_t key = ((uint64_t)(uint32_t)gx << 40) | ((uint64_t)(uint32_t)gy << 20) | (uint64_t)(uint32_t)gz;
+            auto it = cellToCluster.find(key);
+            uint32_t clusterIdx = 0;
+            if (it == cellToCluster.end()) {
+                clusterIdx = (uint32_t)clusters.size();
+                cellToCluster[key] = clusterIdx;
+                clusters.push_back(ClusterAccum{});
+            } else {
+                clusterIdx = it->second;
+            }
+            posCluster[i] = (int)clusterIdx;
+            clusters[clusterIdx].posSum.x += pos.x;
+            clusters[clusterIdx].posSum.y += pos.y;
+            clusters[clusterIdx].posSum.z += pos.z;
+            clusters[clusterIdx].count++;
+        }
+
+        for (const auto& tri : rawTriangles) {
+            for (int k = 0; k < 3; ++k) {
+                int vi = tri.c[k].v - 1;
+                int vti = tri.c[k].vt - 1;
+                if (vi >= 0 && vi < (int)positions.size() && vti >= 0 && vti < (int)texcoords.size()) {
+                    uint32_t cIdx = (uint32_t)posCluster[vi];
+                    clusters[cIdx].uvSum.x += texcoords[vti].x;
+                    clusters[cIdx].uvSum.y += texcoords[vti].y;
+                    clusters[cIdx].uvCount++;
+                }
+            }
+        }
+
+        outModelData.vertices.resize(clusters.size());
+        for (size_t i = 0; i < clusters.size(); ++i) {
+            float invCount = clusters[i].count > 0 ? (1.0f / (float)clusters[i].count) : 1.0f;
+            float invUvCount = clusters[i].uvCount > 0 ? (1.0f / (float)clusters[i].uvCount) : 0.0f;
+            VertexData& v = outModelData.vertices[i];
+            v = {};
+            v.position = {
+                clusters[i].posSum.x * invCount,
+                clusters[i].posSum.y * invCount,
+                clusters[i].posSum.z * invCount,
+                1.0f
+            };
+            v.texcoord = {
+                clusters[i].uvSum.x * invUvCount,
+                clusters[i].uvSum.y * invUvCount
+            };
+            v.normal = { 0.0f, 0.0f, 0.0f };
+        }
+
+        outModelData.indices.reserve(rawTriangles.size() / 2);
+        for (const auto& tri : rawTriangles) {
+            int v0 = tri.c[0].v - 1;
+            int v1 = tri.c[1].v - 1;
+            int v2 = tri.c[2].v - 1;
+            if (v0 < 0 || v0 >= (int)positions.size() ||
+                v1 < 0 || v1 >= (int)positions.size() ||
+                v2 < 0 || v2 >= (int)positions.size()) {
+                continue;
+            }
+            uint32_t c0 = (uint32_t)posCluster[v0];
+            uint32_t c1 = (uint32_t)posCluster[v1];
+            uint32_t c2 = (uint32_t)posCluster[v2];
+            if (c0 == c1 || c1 == c2 || c2 == c0) {
+                continue; // 縮退三角形を除去
+            }
+            outModelData.indices.push_back(c0);
+            outModelData.indices.push_back(c1);
+            outModelData.indices.push_back(c2);
+
+            const Vector4& p0 = outModelData.vertices[c0].position;
+            const Vector4& p1 = outModelData.vertices[c1].position;
+            const Vector4& p2 = outModelData.vertices[c2].position;
+            Vector3 e1 = { p1.x - p0.x, p1.y - p0.y, p1.z - p0.z };
+            Vector3 e2 = { p2.x - p0.x, p2.y - p0.y, p2.z - p0.z };
+            Vector3 fn = Cross(e1, e2);
+            outModelData.vertices[c0].normal.x += fn.x;
+            outModelData.vertices[c0].normal.y += fn.y;
+            outModelData.vertices[c0].normal.z += fn.z;
+            outModelData.vertices[c1].normal.x += fn.x;
+            outModelData.vertices[c1].normal.y += fn.y;
+            outModelData.vertices[c1].normal.z += fn.z;
+            outModelData.vertices[c2].normal.x += fn.x;
+            outModelData.vertices[c2].normal.y += fn.y;
+            outModelData.vertices[c2].normal.z += fn.z;
+        }
+
+        for (auto& v : outModelData.vertices) {
+            float lenSq = v.normal.x * v.normal.x + v.normal.y * v.normal.y + v.normal.z * v.normal.z;
+            if (lenSq > 1e-12f) {
+                float invLen = 1.0f / std::sqrt(lenSq);
+                v.normal.x *= invLen;
+                v.normal.y *= invLen;
+                v.normal.z *= invLen;
+            } else {
+                v.normal = { 0.0f, 1.0f, 0.0f };
+            }
+        }
+        return !outModelData.vertices.empty() && !outModelData.indices.empty();
+    }
+
+    // 通常サイズのOBJモデル: 同一頂点インデックスを結合して頂点バッファを最適化
+    std::unordered_map<ObjCorner, uint32_t, ObjCornerHash> uniqueVertices;
+    uniqueVertices.reserve(rawTriangles.size() + 16);
+    outModelData.vertices.reserve(rawTriangles.size() + 16);
+    outModelData.indices.reserve(rawTriangles.size() * 3);
+
+    bool hasFileNormals = !normals.empty();
+
+    for (const auto& tri : rawTriangles) {
+        uint32_t triIdx[3];
+        bool valid = true;
+        for (int k = 0; k < 3; ++k) {
+            const ObjCorner& corner = tri.c[k];
+            if (corner.v <= 0 || corner.v > (int)positions.size()) {
+                valid = false;
+                break;
+            }
+            auto it = uniqueVertices.find(corner);
+            if (it != uniqueVertices.end()) {
+                triIdx[k] = it->second;
+            } else {
+                uint32_t newIdx = (uint32_t)outModelData.vertices.size();
+                uniqueVertices[corner] = newIdx;
+                VertexData vd{};
+                const Vector3& pos = positions[corner.v - 1];
+                vd.position = { pos.x, pos.y, pos.z, 1.0f };
+                if (corner.vt > 0 && corner.vt <= (int)texcoords.size()) {
+                    vd.texcoord = texcoords[corner.vt - 1];
+                }
+                if (corner.vn > 0 && corner.vn <= (int)normals.size()) {
+                    vd.normal = normals[corner.vn - 1];
+                }
+                outModelData.vertices.push_back(vd);
+                triIdx[k] = newIdx;
+            }
+        }
+        if (!valid) continue;
+        outModelData.indices.push_back(triIdx[0]);
+        outModelData.indices.push_back(triIdx[1]);
+        outModelData.indices.push_back(triIdx[2]);
+
+        if (!hasFileNormals) {
+            const Vector4& p0 = outModelData.vertices[triIdx[0]].position;
+            const Vector4& p1 = outModelData.vertices[triIdx[1]].position;
+            const Vector4& p2 = outModelData.vertices[triIdx[2]].position;
+            Vector3 e1 = { p1.x - p0.x, p1.y - p0.y, p1.z - p0.z };
+            Vector3 e2 = { p2.x - p0.x, p2.y - p0.y, p2.z - p0.z };
+            Vector3 fn = Cross(e1, e2);
+            for (int k = 0; k < 3; ++k) {
+                outModelData.vertices[triIdx[k]].normal.x += fn.x;
+                outModelData.vertices[triIdx[k]].normal.y += fn.y;
+                outModelData.vertices[triIdx[k]].normal.z += fn.z;
+            }
+        }
+    }
+
+    if (!hasFileNormals) {
+        for (auto& v : outModelData.vertices) {
+            float lenSq = v.normal.x * v.normal.x + v.normal.y * v.normal.y + v.normal.z * v.normal.z;
+            if (lenSq > 1e-12f) {
+                float invLen = 1.0f / std::sqrt(lenSq);
+                v.normal.x *= invLen;
+                v.normal.y *= invLen;
+                v.normal.z *= invLen;
+            } else {
+                v.normal = { 0.0f, 1.0f, 0.0f };
+            }
+        }
+    }
+
+    return !outModelData.vertices.empty();
+}
+} // namespace
+
 std::unique_ptr<Model> Model::LoadGLTF(const std::string& filename, ID3D12Device* device) {
     std::unique_ptr<Model> model = std::make_unique<Model>();
 
-    // キャッシュを検索
+    // キャッシュを検索 (GPU頂点/インデックスバッファも共有し、シーン遷移時の数百MBコピー＆再生成を回避)
     auto it = s_GLTFCache.find(filename);
     if (it != s_GLTFCache.end()) {
         const auto& cache = it->second;
@@ -195,16 +585,45 @@ std::unique_ptr<Model> Model::LoadGLTF(const std::string& filename, ID3D12Device
         if (cache.animation) {
             model->animation_ = std::make_unique<Animation>(*cache.animation);
         }
+        if (cache.vertexResource) {
+            model->vertexResource_ = cache.vertexResource;
+            model->vertexBufferView_ = cache.vertexBufferView;
+            model->indexResource_ = cache.indexResource;
+            model->indexBufferView_ = cache.indexBufferView;
+            model->vertexCount_ = cache.vertexCount;
+            model->indexCount_ = cache.indexCount;
+            model->InitializeMaterialAndSkinning(device);
+            return model;
+        }
         model->Initialize(cache.modelData, device);
         return model;
     }
 
     ModelData modelData;
 
+    bool isObjFile = (filename.size() >= 4 &&
+        (filename.compare(filename.size() - 4, 4, ".obj") == 0 ||
+         filename.compare(filename.size() - 4, 4, ".OBJ") == 0));
+
+    if (isObjFile && LoadObjFileFast(filename, modelData, model->rootNode)) {
+        model->Initialize(modelData, device);
+
+        GLTFCacheData cache;
+        cache.rootNode = model->rootNode;
+        cache.vertexResource = model->vertexResource_;
+        cache.vertexBufferView = model->vertexBufferView_;
+        cache.indexResource = model->indexResource_;
+        cache.indexBufferView = model->indexBufferView_;
+        cache.vertexCount = model->vertexCount_;
+        cache.indexCount = model->indexCount_;
+        s_GLTFCache[filename] = std::move(cache);
+        return model;
+    }
+
     Assimp::Importer importer;
-    // aiProcess_PreTransformVertices を削除し、ボーン構造を維持する
+    // aiProcess_JoinIdenticalVertices を追加して重複頂点を結合する
     const aiScene* scene = importer.ReadFile(filename,
-        aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_LimitBoneWeights | aiProcess_ConvertToLeftHanded | aiProcess_PopulateArmatureData);
+        aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_JoinIdenticalVertices | aiProcess_LimitBoneWeights | aiProcess_ConvertToLeftHanded | aiProcess_PopulateArmatureData);
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
         std::string errorMsg = "Assimp Error: " + std::string(importer.GetErrorString()) + "\n";
@@ -323,22 +742,32 @@ std::unique_ptr<Model> Model::LoadGLTF(const std::string& filename, ID3D12Device
         }
     }
 
-    // 解析データをキャッシュに保存
+    model->Initialize(modelData, device);
+
+    // 解析データとGPUバッファをキャッシュに保存
     GLTFCacheData cache;
-    cache.modelData = modelData;
     cache.rootNode = model->rootNode;
     cache.bones = model->bones_;
     if (model->animation_) {
         cache.animation = std::make_shared<Animation>(*model->animation_);
     }
+    cache.vertexResource = model->vertexResource_;
+    cache.vertexBufferView = model->vertexBufferView_;
+    cache.indexResource = model->indexResource_;
+    cache.indexBufferView = model->indexBufferView_;
+    cache.vertexCount = model->vertexCount_;
+    cache.indexCount = model->indexCount_;
     s_GLTFCache[filename] = std::move(cache);
 
-    model->Initialize(modelData, device);
     return model;
 }
 
 void Model::Initialize(ID3D12Device* device, ModelCommonData* commonData) {
     commonData_ = commonData;
+    if (commonData_) {
+        vertexCount_ = static_cast<uint32_t>(commonData_->vertices.size());
+        indexCount_ = static_cast<uint32_t>(commonData_->indices.size());
+    }
 
     materialResource_ = CreateBufferResource(device, sizeof(Material));
     Material* materialData = nullptr;
@@ -416,19 +845,46 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateDefaultBuffer(
         return defaultBuffer;
     }
     
-    Microsoft::WRL::ComPtr<ID3D12CommandAllocator> tempAllocator;
-    hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tempAllocator));
-    if (FAILED(hr) || !tempAllocator) {
-        return defaultBuffer;
-    }
-    
-    Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> tempCmdList;
-    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tempAllocator.Get(), nullptr, IID_PPV_ARGS(&tempCmdList));
-    if (FAILED(hr) || !tempCmdList) {
-        return defaultBuffer;
+    static ID3D12Device* s_cachedDevice = nullptr;
+    static Microsoft::WRL::ComPtr<ID3D12CommandAllocator> s_tempAllocator;
+    static Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> s_tempCmdList;
+    static Microsoft::WRL::ComPtr<ID3D12Fence> s_fence;
+    static UINT64 s_fenceValue = 0;
+    static HANDLE s_fenceEvent = nullptr;
+
+    if (s_cachedDevice != device || !s_tempAllocator || !s_tempCmdList || !s_fence) {
+        s_tempCmdList.Reset();
+        s_tempAllocator.Reset();
+        s_fence.Reset();
+        if (s_fenceEvent) {
+            CloseHandle(s_fenceEvent);
+            s_fenceEvent = nullptr;
+        }
+        s_fenceValue = 0;
+
+        hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&s_tempAllocator));
+        if (FAILED(hr) || !s_tempAllocator) {
+            return defaultBuffer;
+        }
+
+        hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, s_tempAllocator.Get(), nullptr, IID_PPV_ARGS(&s_tempCmdList));
+        if (FAILED(hr) || !s_tempCmdList) {
+            return defaultBuffer;
+        }
+        s_tempCmdList->Close();
+
+        hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&s_fence));
+        if (FAILED(hr) || !s_fence) {
+            return defaultBuffer;
+        }
+        s_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+        s_cachedDevice = device;
     }
 
-    tempCmdList->CopyBufferRegion(defaultBuffer.Get(), 0, uploadBuffer.Get(), 0, byteSize);
+    s_tempAllocator->Reset();
+    s_tempCmdList->Reset(s_tempAllocator.Get(), nullptr);
+
+    s_tempCmdList->CopyBufferRegion(defaultBuffer.Get(), 0, uploadBuffer.Get(), 0, byteSize);
 
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -436,72 +892,83 @@ Microsoft::WRL::ComPtr<ID3D12Resource> CreateDefaultBuffer(
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    tempCmdList->ResourceBarrier(1, &barrier);
+    s_tempCmdList->ResourceBarrier(1, &barrier);
 
-    tempCmdList->Close();
+    s_tempCmdList->Close();
 
-    ID3D12CommandList* cmdLists[] = { tempCmdList.Get() };
+    ID3D12CommandList* cmdLists[] = { s_tempCmdList.Get() };
     commandQueue->ExecuteCommandLists(1, cmdLists);
 
-    Microsoft::WRL::ComPtr<ID3D12Fence> fence;
-    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
-    if (SUCCEEDED(hr) && fence) {
-        HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        commandQueue->Signal(fence.Get(), 1);
-        if (fence->GetCompletedValue() < 1) {
-            fence->SetEventOnCompletion(1, fenceEvent);
-            WaitForSingleObject(fenceEvent, INFINITE);
+    if (s_fence && s_fenceEvent) {
+        ++s_fenceValue;
+        commandQueue->Signal(s_fence.Get(), s_fenceValue);
+        if (s_fence->GetCompletedValue() < s_fenceValue) {
+            s_fence->SetEventOnCompletion(s_fenceValue, s_fenceEvent);
+            WaitForSingleObject(s_fenceEvent, INFINITE);
         }
-        CloseHandle(fenceEvent);
     }
 
     return defaultBuffer;
 }
 
-void Model::Initialize(const ModelData& modelData, ID3D12Device* device) {
-    vertices_ = modelData.vertices;
-    indices_ = modelData.indices;
+void Model::InitializeMaterialAndSkinning(ID3D12Device* device) {
+    materialResource_ = CreateBufferResource(device, sizeof(Material));
+    if (materialResource_) {
+        Material* materialData = nullptr;
+        materialResource_->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
+        if (materialData) {
+            materialData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+            materialData->enableLighting = 1;
+            materialData->uvTransform = MakeIdentity4x4();
+            materialData->shininess = 10.0f;
+            materialData->environmentCoefficient = environmentCoefficient;
+        }
+        materialResource_->Unmap(0, nullptr);
+    }
 
-    if (vertices_.empty()) {
+    // スキニング定数バッファの生成 (ボーンを持つモデルのみ生成してリソース節約)
+    if (!bones_.empty() || animation_) {
+        skinningResource_ = CreateBufferResource(device, sizeof(SkinningPalette));
+        if (skinningResource_) {
+            skinningResource_->Map(0, nullptr, reinterpret_cast<void**>(&skinningData_));
+            if (skinningData_) {
+                for (int i = 0; i < kMaxBones; i++)
+                    skinningData_->boneMatrices[i] = MakeIdentity4x4();
+            }
+        }
+    }
+
+    transform = { {1.0f, 1.0f, 1.0f}, {0.0f, 3.1415f, 0.0f}, {0.0f, 0.0f, 0.0f} };
+}
+
+void Model::Initialize(const ModelData& modelData, ID3D12Device* device) {
+    vertexCount_ = static_cast<uint32_t>(modelData.vertices.size());
+    indexCount_ = static_cast<uint32_t>(modelData.indices.size());
+
+    if (vertexCount_ == 0) {
         return;
     }
 
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexUploadBuffer;
-    vertexResource_ = CreateDefaultBuffer(device, vertices_.data(), sizeof(VertexData) * vertices_.size(), vertexUploadBuffer);
+    vertexResource_ = CreateDefaultBuffer(device, modelData.vertices.data(), sizeof(VertexData) * vertexCount_, vertexUploadBuffer);
     if (!vertexResource_) {
         return;
     }
     vertexBufferView_.BufferLocation = vertexResource_->GetGPUVirtualAddress();
-    vertexBufferView_.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertices_.size());
+    vertexBufferView_.SizeInBytes = static_cast<UINT>(sizeof(VertexData) * vertexCount_);
     vertexBufferView_.StrideInBytes = sizeof(VertexData);
 
     Microsoft::WRL::ComPtr<ID3D12Resource> indexUploadBuffer;
-    if (!indices_.empty()) {
-        indexResource_ = CreateDefaultBuffer(device, indices_.data(), sizeof(uint32_t) * indices_.size(), indexUploadBuffer);
+    if (indexCount_ > 0) {
+        indexResource_ = CreateDefaultBuffer(device, modelData.indices.data(), sizeof(uint32_t) * indexCount_, indexUploadBuffer);
         if (indexResource_) {
             indexBufferView_.BufferLocation = indexResource_->GetGPUVirtualAddress();
-            indexBufferView_.SizeInBytes = static_cast<UINT>(sizeof(uint32_t) * indices_.size());
+            indexBufferView_.SizeInBytes = static_cast<UINT>(sizeof(uint32_t) * indexCount_);
             indexBufferView_.Format = DXGI_FORMAT_R32_UINT;
         }
     }
 
-    materialResource_ = CreateBufferResource(device, sizeof(Material));
-    Material* materialData = nullptr;
-    materialResource_->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
-    materialData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    materialData->enableLighting = 1;
-    materialData->uvTransform = MakeIdentity4x4();
-    materialData->shininess = 10.0f;
-    materialData->environmentCoefficient = environmentCoefficient;
-    materialResource_->Unmap(0, nullptr);
-
-    // スキニング定数バッファの生成
-    skinningResource_ = CreateBufferResource(device, sizeof(SkinningPalette));
-    skinningResource_->Map(0, nullptr, reinterpret_cast<void**>(&skinningData_));
-    for (int i = 0; i < kMaxBones; i++)
-        skinningData_->boneMatrices[i] = MakeIdentity4x4();
-
-    transform = { {1.0f, 1.0f, 1.0f}, {0.0f, 3.1415f, 0.0f}, {0.0f, 0.0f, 0.0f} };
+    InitializeMaterialAndSkinning(device);
 }
 
 void Model::UpdateAnimation(float deltaTime) {
@@ -572,7 +1039,7 @@ void Model::UpdateAnimation(float deltaTime) {
 void Model::ComputeSkinningMatrices(Node& node, const Matrix4x4& parentMatrix) {
     Matrix4x4 globalMatrix = Multiply(node.localMatrix, parentMatrix);
 
-    if (bones_.count(node.name)) {
+    if (skinningData_ && bones_.count(node.name)) {
         const auto& bone = bones_[node.name];
         skinningData_->boneMatrices[bone.index] = Multiply(bone.offsetMatrix, globalMatrix);
     }
@@ -617,7 +1084,7 @@ void Model::Draw(ID3D12GraphicsCommandList* commandList) {
     } else {
         vbView = &vertexBufferView_;
         ibView = &indexBufferView_;
-        indexCount = (UINT)indices_.size();
+        indexCount = indexCount_;
     }
 
     commandList->IASetVertexBuffers(0, 1, vbView);
@@ -643,7 +1110,7 @@ void Model::Draw(
     } else {
         vbView = &vertexBufferView_;
         ibView = &indexBufferView_;
-        indexCount = (UINT)indices_.size();
+        indexCount = indexCount_;
     }
 
     commandList->IASetVertexBuffers(0, 1, vbView);
@@ -669,7 +1136,7 @@ void Model::DrawModel(
     } else {
         vbView = &vertexBufferView_;
         ibView = &indexBufferView_;
-        indexCount = (UINT)indices_.size();
+        indexCount = indexCount_;
     }
 
     commandList->IASetVertexBuffers(0, 1, vbView);
@@ -715,7 +1182,7 @@ void Model::PrepareDraw(
 }
 
 void Model::DrawPrepared(ID3D12GraphicsCommandList* commandList) {
-    UINT indexCount = commonData_ ? (UINT)commonData_->indices.size() : (UINT)indices_.size();
+    UINT indexCount = commonData_ ? (UINT)commonData_->indices.size() : indexCount_;
     commandList->DrawIndexedInstanced(indexCount, 1, 0, 0, 0);
 }
 
@@ -747,7 +1214,8 @@ void Model::DrawSkinningModel(
     commandList->SetComputeRootConstantBufferView(2, skinCluster.infoResource->GetGPUVirtualAddress());
 
     // Dispatch
-    commandList->Dispatch(UINT(vertices_.size() + 1023) / 1024, 1, 1);
+    uint32_t vCount = commonData_ ? (uint32_t)commonData_->vertices.size() : vertexCount_;
+    commandList->Dispatch(UINT(vCount + 1023) / 1024, 1, 1);
 
     // バリア (UAV -> Vertex Buffer)
     D3D12_RESOURCE_BARRIER barrier{};
@@ -768,7 +1236,7 @@ void Model::DrawSkinningModel(
         indexCount = (UINT)commonData_->indices.size();
     } else {
         ibView = &indexBufferView_;
-        indexCount = (UINT)indices_.size();
+        indexCount = indexCount_;
     }
 
     // ★ここでグラフィックス用のパイプラインとルートシグネチャを再セットする
