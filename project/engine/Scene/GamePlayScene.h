@@ -506,7 +506,7 @@ private:
     // フェーズ管理用
     GamePhase currentPhase_ = GamePhase::kPhase1; // 初期値フェーズ1スタート
     float phaseTimer_ = 0.0f;
-    static constexpr float kPhaseDuration = 2.8f; // スタート演出確認用に1フェーズ2.8秒に短縮
+    static constexpr float kPhaseDuration = 4.0f; // 1フェーズ4秒に短縮
 
     // フェーズ表示演出（高速ブースト＆ソニックブーム演出）用メンバ変数
     static constexpr float kPhaseIntroDuration = 2.4f;

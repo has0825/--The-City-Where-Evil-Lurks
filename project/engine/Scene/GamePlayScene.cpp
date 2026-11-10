@@ -1,4 +1,4 @@
-#include "GamePlayScene.h"
+﻿#include "GamePlayScene.h"
 #include "WinApp.h"
 #include "SceneManager.h"
 #include "LoadingScreen.h"
@@ -1934,9 +1934,6 @@ void GamePlayScene::Update() {
         return;
     }
 
-    // スタート演出ブランチ用：演出確認中にゲームオーバーにならないよう常に最大HPを維持
-    playerHP_ = playerMaxHP_;
-
     // HPVisualの補間更新（滑らかなHPバー減少用）
     playerHPVisual_ = std::lerp(playerHPVisual_, playerHP_, 0.1f);
     bossHPVisual_ = std::lerp(bossHPVisual_, bossHP_, 0.1f);
@@ -2275,10 +2272,6 @@ void GamePlayScene::Update() {
             cameraShakeTimer_ = 0.0f;
             cameraShakeOffset_ = { 0.0f, 0.0f, 0.0f };
             activePostProcess_ = kNone; // ラジアルブラーを解除
-            if (!isTitleMode_) {
-                SceneManager::GetInstance()->ChangeScene("TITLE");
-                return;
-            }
         }
     }
 
@@ -2693,7 +2686,8 @@ void GamePlayScene::Update() {
         // --- 戦闘機（レールシューター）モード ---
 
         // ── ブースト処理（LSHIFTで発動、バレルロール終了と同時に自動で戻る） ────────────────
-        if (input_->IsKeyTriggered(DIK_LSHIFT) && !(phaseIntroTimer_ >= 0.0f) && !isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
+        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
+        if (input_->IsKeyTriggered(DIK_LSHIFT) && !(phaseIntroTimer_ >= 0.0f) && !isBossIntro && !isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
             if (!isBarrelRolling_) {
                 isBoosting_ = true;
                 isBarrelRolling_ = true;
@@ -2750,8 +2744,8 @@ void GamePlayScene::Update() {
         }
 
         // ── 1. プレイヤーのワールドZ座標を自律前進（フェーズ演出中およびWARNING予告中も前進・疾走感を維持） ──────────────────
-        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (9.0f - bossAppearanceTimer_) >= 2.5f);
-        if (!isWaitingForTransition && !isBossIntro && !isBossDefeatedSequence_) {
+        bool isBossIntroCam = (isBossIntro && (9.0f - bossAppearanceTimer_) >= 2.5f);
+        if (!isWaitingForTransition && !isBossIntroCam && !isBossDefeatedSequence_) {
             fighterWorldZ_ += boostForwardSpeed_ * kDeltaTime;
         }
 
@@ -2794,7 +2788,7 @@ void GamePlayScene::Update() {
         if (fighterModel_) {
             Vector3 inputDir = {0,0,0};
             if ((phaseIntroTimer_ >= 0.0f || isBossIntro) && !isTitleMode_) {
-                // フェーズ演出中およびボス降下カメラ中は自機を画面中央へ滑らかにセンタリングして見栄えを良くする
+                // フェーズ演出中およびボス登場演出中は自機を画面中央へ滑らかにセンタリング固定（操作無効）
                 fighterModel_->transform.translate.x = std::lerp(fighterModel_->transform.translate.x, 0.0f, 0.12f);
                 fighterModel_->transform.translate.y = std::lerp(fighterModel_->transform.translate.y, 0.0f, 0.12f);
             } else if (!isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
@@ -2802,23 +2796,6 @@ void GamePlayScene::Update() {
                 if (input_->IsKeyPressed(DIK_S)) inputDir.y -= 1.0f;
                 if (input_->IsKeyPressed(DIK_A)) inputDir.x -= 1.0f;
                 if (input_->IsKeyPressed(DIK_D)) inputDir.x += 1.0f;
-
-                // 手動入力がない場合は、スタート演出確認用にプレイヤーを自動で少し動かす
-                if (inputDir.x == 0.0f && inputDir.y == 0.0f) {
-                    if (currentPhase_ == GamePhase::kPhase1) {
-                        // PHASE 1: 左上へバンク移動 ➔ 右下へ切り返し
-                        inputDir.x = (phaseTimer_ < 1.35f) ? -0.85f : 0.85f;
-                        inputDir.y = (phaseTimer_ < 1.35f) ?  0.35f : -0.30f;
-                    } else if (currentPhase_ == GamePhase::kPhase2) {
-                        // PHASE 2: 右上へバンク移動 ➔ 左下へ切り返し
-                        inputDir.x = (phaseTimer_ < 1.35f) ?  0.85f : -0.85f;
-                        inputDir.y = (phaseTimer_ < 1.35f) ?  0.35f : -0.30f;
-                    } else if (currentPhase_ == GamePhase::kBossFight && (9.0f - bossAppearanceTimer_) < 2.5f) {
-                        // WARNING予告フェーズ中は中央へ緩やかに戻しつつ微バンク
-                        fighterModel_->transform.translate.x = std::lerp(fighterModel_->transform.translate.x, 0.0f, 0.08f);
-                        fighterModel_->transform.translate.y = std::lerp(fighterModel_->transform.translate.y, 0.0f, 0.08f);
-                    }
-                }
             }
 
             if (inputDir.x != 0 || inputDir.y != 0) {
@@ -3054,6 +3031,7 @@ void GamePlayScene::Update() {
             // ── 5. 機体の傾き（通常ロール/ピッチ + バレルロール合成） ──
             float baseRoll  = inputDir.x * -kMaxRollAngle;
             float basePitch = inputDir.y * 0.4f;
+            if (isBossIntro) { baseRoll = 0.0f; basePitch = 0.0f; }
             if (phaseIntroTimer_ >= 0.0f && !isTitleMode_) {
                 // フェーズ演出中のソニックブーム加速に伴う軽やかな上昇ピッチ演出
                 float pt = phaseIntroTimer_;
@@ -3557,7 +3535,6 @@ void GamePlayScene::Update() {
             Vector3 reticlePos = aimReticlePos_;
 
             // ボス登場演出中は射撃を禁止
-            bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
             if (input_->IsKeyTriggered(DIK_SPACE) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_) {
                 // 翼の発射位置をレールのright/up方向で計算
                 Vector3 leftWing  = Add(fighterWorldPos, Add(Scale(playerRailRight, -2.5f), Scale(playerRailUp, 0.8f)));
@@ -6000,7 +5977,7 @@ void GamePlayScene::Draw() {
         }
         
         // エイミング(レティクル)の描画 (ボス登場演出中および画面外からの突入配置中は非表示)
-        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (9.0f - bossAppearanceTimer_) >= 2.5f);
+        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
         bool hideReticleForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
         if (!isBossIntro && !isTitleMode_ && !hideReticleForTransition && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
@@ -7397,30 +7374,30 @@ void GamePlayScene::EmitHitEffect(const Vector3& pos) {
         }
     }
 
-    // ── ダイナミック画面演出のトリガー（近接時は約1.5〜1.8倍に強化。射撃時は強さを20%に抑えプレイしやすく調整） ──
-    float shakeMultiplier = isMelee ? 1.6f : 0.8f;
-    float hitstopMultiplier = isMelee ? 1.8f : 1.0f;
+    // ── ダイナミック画面演出（カメラ揺れ・ラジアルブラー・フラッシュ等）はデモモード時のみ発動（通常プレイでの敵被弾・撃破時は画面を揺らしたりぼかしたりしない） ──
+    if (isDemoMode_) {
+        float shakeMultiplier = isMelee ? 1.6f : 0.8f;
+        float hitstopMultiplier = isMelee ? 1.8f : 1.0f;
 
-    activeShakeIntensity_ = cameraShakeIntensity_ * (isMelee ? 1.6f : 0.20f);
-    cameraShakeTimer_ = cameraShakeTimeMax_ * shakeMultiplier;
-    hitstopTimer_ = isMelee ? (hitstopTimeMax_ * hitstopMultiplier) : 0.0f;
-    
-    // デジタルバグ（Preset 6）の砂嵐演出は無効化 (ユーザー要求により削除)
+        activeShakeIntensity_ = cameraShakeIntensity_ * (isMelee ? 1.6f : 0.20f);
+        cameraShakeTimer_ = cameraShakeTimeMax_ * shakeMultiplier;
+        hitstopTimer_ = isMelee ? (hitstopTimeMax_ * hitstopMultiplier) : 0.0f;
 
-    if (useRadialBlur_) {
-        blurIntensity_ = maxBlurWidth_ * (isMelee ? 1.5f : 1.0f);
-    }
-    if (useImpactFlash_) {
-        flashAlpha_ = isMelee ? 0.80f : 0.55f; // 近接はフラッシュ強め
-        if (selectedEffectPreset_ == 1) flashColor_ = {1.0f, 0.4f, 0.1f, 1.0f};
-        else if (selectedEffectPreset_ == 2) flashColor_ = {0.2f, 0.8f, 1.0f, 1.0f};
-        else if (selectedEffectPreset_ == 4) flashColor_ = {0.15f, 0.0f, 0.25f, 1.0f}; // 特異点は暗い黒紫色
-        else if (selectedEffectPreset_ == 5) flashColor_ = {0.4f, 0.75f, 1.0f, 1.0f};
-        else if (selectedEffectPreset_ == 8) flashColor_ = {1.0f, 0.95f, 0.5f, 1.0f};
-        else if (selectedEffectPreset_ == 9) flashColor_ = {0.35f, 0.0f, 0.55f, 1.0f};
-        else flashColor_ = {1.0f, 1.0f, 1.0f, 1.0f};
-    } else {
-        flashAlpha_ = 0.0f;
+        if (useRadialBlur_) {
+            blurIntensity_ = maxBlurWidth_ * (isMelee ? 1.5f : 1.0f);
+        }
+        if (useImpactFlash_) {
+            flashAlpha_ = isMelee ? 0.80f : 0.55f; // 近接はフラッシュ強め
+            if (selectedEffectPreset_ == 1) flashColor_ = {1.0f, 0.4f, 0.1f, 1.0f};
+            else if (selectedEffectPreset_ == 2) flashColor_ = {0.2f, 0.8f, 1.0f, 1.0f};
+            else if (selectedEffectPreset_ == 4) flashColor_ = {0.15f, 0.0f, 0.25f, 1.0f}; // 特異点は暗い黒紫色
+            else if (selectedEffectPreset_ == 5) flashColor_ = {0.4f, 0.75f, 1.0f, 1.0f};
+            else if (selectedEffectPreset_ == 8) flashColor_ = {1.0f, 0.95f, 0.5f, 1.0f};
+            else if (selectedEffectPreset_ == 9) flashColor_ = {0.35f, 0.0f, 0.55f, 1.0f};
+            else flashColor_ = {1.0f, 1.0f, 1.0f, 1.0f};
+        } else {
+            flashAlpha_ = 0.0f;
+        }
     }
 }
 
