@@ -1,4 +1,4 @@
-﻿#include "GamePlayScene.h"
+#include "GamePlayScene.h"
 #include "WinApp.h"
 #include "SceneManager.h"
 #include "LoadingScreen.h"
@@ -605,48 +605,7 @@ void GamePlayScene::Initialize() {
     hpBarInstancingSrvHandleGPU_ = SrvManager::GetInstance()->GetGPUDescriptorHandle(hpBarInstancingSrvIndex);
     device->CreateShaderResourceView(hpBarInstancingResource_.Get(), &hpBarInstancingSrvDesc, hpBarInstancingSrvHandleCPU);
 
-    // ── 黒煙パーティクル用バッファ生成とマッピング ──
-    smokeInstancingResource_ = CreateBufferResource(device, sizeof(ParticleForGPU) * kMaxSmokeParticles);
-    smokeInstancingResource_->Map(0, nullptr, reinterpret_cast<void**>(&smokeInstancingData_));
-    for (uint32_t i = 0; i < kMaxSmokeParticles; ++i) {
-        smokeInstancingData_[i].WVP = MakeIdentity4x4();
-        smokeInstancingData_[i].World = MakeIdentity4x4();
-        smokeInstancingData_[i].color = { 0.0f, 0.0f, 0.0f, 0.0f };
-        smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
-    }
 
-    D3D12_SHADER_RESOURCE_VIEW_DESC smokeInstancingSrvDesc{};
-    smokeInstancingSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
-    smokeInstancingSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    smokeInstancingSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-    smokeInstancingSrvDesc.Buffer.FirstElement = 0;
-    smokeInstancingSrvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-    smokeInstancingSrvDesc.Buffer.NumElements = kMaxSmokeParticles;
-    smokeInstancingSrvDesc.Buffer.StructureByteStride = sizeof(ParticleForGPU);
-
-    uint32_t smokeInstancingSrvIndex = SrvManager::GetInstance()->Allocate();
-    D3D12_CPU_DESCRIPTOR_HANDLE smokeInstancingSrvHandleCPU = SrvManager::GetInstance()->GetCPUDescriptorHandle(smokeInstancingSrvIndex);
-    smokeInstancingSrvHandleGPU_ = SrvManager::GetInstance()->GetGPUDescriptorHandle(smokeInstancingSrvIndex);
-    device->CreateShaderResourceView(smokeInstancingResource_.Get(), &smokeInstancingSrvDesc, smokeInstancingSrvHandleCPU);
-
-    smokeParticles_.resize(kMaxSmokeParticles);
-    for (uint32_t i = 0; i < kMaxSmokeParticles; ++i) {
-        smokeParticles_[i].currentTime = 9999.0f;
-        smokeParticles_[i].lifeTime = 1.0f;
-    }
-
-    // 墜落演出関連変数の初期化
-    isPlayerDead_ = false;
-    playerDeathTimer_ = 0.0f;
-    crashExplosionTimer_ = 0.0f;
-    isFighterDestroyed_ = false;
-    hasCrashExploded_ = false;
-    playerCrashVel_ = { 0.0f, 0.0f, 0.0f };
-    playerCrashLocalPos_ = { 0.0f, 0.0f, 0.0f };
-    playerCrashSpin_ = 0.0f;
-    playerCrashPitch_ = 0.0f;
-    playerCrashYaw_ = 0.0f;
-    crashSitePos_ = { 0.0f, 0.0f, 0.0f };
 
     // HP関連変数の初期化
     playerHP_ = 100.0f;
@@ -1531,11 +1490,15 @@ void GamePlayScene::Initialize() {
     TextureManager::GetInstance()->LoadTexture("number/big2.png");
     TextureManager::GetInstance()->LoadTexture("circle2.png");
     warningTextSprite_ = Sprite::Create("warning_text.png", { 0.0f, 0.0f });
-    for (int i = 0; i < 2; ++i) {
-        warningGhostSprites_[i] = Sprite::Create("warning_text.png", { 0.0f, 0.0f });
+    for (int i = 0; i < 3; ++i) {
+        warningTextGhostSprites_[i] = Sprite::Create("warning_text.png", { 0.0f, 0.0f });
     }
     warningTapeTopSprite_ = Sprite::Create("warning_tape_single.png", { 0.0f, 0.0f });
     warningTapeBottomSprite_ = Sprite::Create("warning_tape_single.png", { 0.0f, 0.0f });
+    for (int i = 0; i < 4; ++i) {
+        warningTapeTopSprites_[i] = Sprite::Create("warning_tape_single.png", { 0.0f, 0.0f });
+        warningTapeBottomSprites_[i] = Sprite::Create("warning_tape_single.png", { 0.0f, 0.0f });
+    }
     warningRedOverlaySprite_ = Sprite::Create("human/white.png", { 0.0f, 0.0f });
 
     // フェーズ演出（高速ブースト＆ソニックブーム）用スプライト群の事前生成
@@ -1609,68 +1572,6 @@ void GamePlayScene::StartPhaseIntro(int phaseNum) {
 void GamePlayScene::Finalize() {
     if (audio_) {
         audio_->Finalize();
-    }
-}
-
-void GamePlayScene::EmitCrashSmoke(const Vector3& pos, const Vector3& inheritedVel, bool isFireEmber) {
-    if (smokeParticles_.empty()) return;
-
-    // 空きスロットまたは最も寿命が進んでいるスロットを探索
-    SmokeParticle* target = nullptr;
-    for (auto& sp : smokeParticles_) {
-        if (sp.currentTime >= sp.lifeTime) {
-            target = &sp;
-            break;
-        }
-    }
-    if (!target) {
-        float maxProg = -1.0f;
-        for (auto& sp : smokeParticles_) {
-            float prog = sp.currentTime / (sp.lifeTime > 0.0f ? sp.lifeTime : 1.0f);
-            if (prog > maxProg) {
-                maxProg = prog;
-                target = &sp;
-            }
-        }
-    }
-    if (!target) return;
-
-    std::uniform_real_distribution<float> distOffset(-1.4f, 1.4f);
-    std::uniform_real_distribution<float> distVelSpread(-4.0f, 4.0f);
-    std::uniform_real_distribution<float> distUp(2.5f, 7.0f);
-    std::uniform_real_distribution<float> distScale(2.2f, 4.2f);
-    std::uniform_real_distribution<float> distLife(1.3f, 2.0f);
-    std::uniform_real_distribution<float> distCol(0.04f, 0.16f);
-
-    target->position = {
-        pos.x + distOffset(randomEngine_),
-        pos.y + distOffset(randomEngine_),
-        pos.z + distOffset(randomEngine_)
-    };
-    // 飛行慣性の半分を引き継ぎつつ、熱気流で上へ上昇・周囲へ拡散
-    target->velocity = {
-        inheritedVel.x * 0.35f + distVelSpread(randomEngine_),
-        inheritedVel.y * 0.25f + distUp(randomEngine_),
-        inheritedVel.z * 0.35f + distVelSpread(randomEngine_)
-    };
-    float sc = distScale(randomEngine_);
-    target->scale = { sc, sc, 1.0f };
-    target->growthRate = 4.8f + (float)(randomEngine_() % 100) / 35.0f; // 膨らみながらモクモク広がる
-    target->lifeTime = distLife(randomEngine_);
-    target->currentTime = 0.0f;
-
-    if (isFireEmber) {
-        // 煙の中に混ざる燃え盛る火の粉・炎
-        target->color = { 1.0f, 0.45f, 0.08f, 0.95f };
-        target->initialAlpha = 0.95f;
-        target->scale = { sc * 0.65f, sc * 0.65f, 1.0f };
-        target->growthRate = 2.2f;
-    } else {
-        // 重厚な黒煙・濃灰色の煙
-        float c = distCol(randomEngine_);
-        float alpha = 0.85f + (float)(randomEngine_() % 15) / 100.0f;
-        target->color = { c, c, c, alpha };
-        target->initialAlpha = alpha;
     }
 }
 
@@ -2028,69 +1929,13 @@ void GamePlayScene::Update() {
         }
     }
     
-    // ── プレイヤー被撃墜・墜落演出の開始判定 ──
-    if (playerHP_ <= 0.0f && !isTitleMode_ && !isPlayerDead_) {
-        isPlayerDead_ = true;
-        playerDeathTimer_ = 0.0f;
-        crashExplosionTimer_ = 0.0f;
-        isFighterDestroyed_ = false;
-        hasCrashExploded_ = false;
-
-        // 墜落開始時の機体ローカル座標と回転を保存
-        if (fighterModel_) {
-            playerCrashLocalPos_ = fighterModel_->transform.translate;
-        }
-        playerCrashSpin_ = playerRotationRoll_;
-        playerCrashPitch_ = playerRotationPitch_;
-        playerCrashYaw_ = 0.0f;
-
-        // 初期の横ドリフト・降下初速
-        std::uniform_real_distribution<float> distDrift(-10.0f, 10.0f);
-        playerCrashVel_ = { distDrift(randomEngine_), -6.0f, 0.0f };
-
-        // ブースト・バレルロールを解除
-        isBarrelRolling_ = false;
-        isBoosting_ = false;
-        boostBlurWidth_ = 0.0f;
-
-        // 被弾・破壊の初期衝撃
-        cameraShakeTimer_ = 0.50f;
-        cameraShakeIntensity_ = 5.0f;
-        activeShakeIntensity_ = 5.0f;
-        cameraShakeTimeMax_ = 0.50f;
-
-        Vector3 pRailPos = GetRailPosition(fighterWorldZ_);
-        Vector3 pRailDir = GetRailDirection(fighterWorldZ_);
-        Vector3 pRailRight = CalculateRailRight(pRailDir);
-        Vector3 pRailUp = CalculateRailUp(pRailDir, pRailRight);
-        float pOffsetUp = playerCrashLocalPos_.y + 17.0f;
-        Vector3 fighterPos = Add(pRailPos, Add(Scale(pRailRight, playerCrashLocalPos_.x), Scale(pRailUp, pOffsetUp)));
-
-        if (particleManager_) {
-            particleManager_->EmitCustomSparks(fighterPos, 90.0f, 40, { 1.0f, 0.6f, 0.1f }, 1.2f);
-            particleManager_->EmitRing(fighterPos, { 1.0f, 0.3f, 0.1f });
-        }
-        if (audio_) {
-            PlaySE(jumpSE_, false, 2.0f);
-        }
+    if (playerHP_ <= 0.0f && !isTitleMode_) {
+        SceneManager::GetInstance()->ChangeScene("GAMEOVER");
+        return;
     }
 
-    // ── プレイヤー墜落演出中のゲームオーバー画面への遷移 ──
-    if (isPlayerDead_) {
-        playerDeathTimer_ += kDeltaTime;
-        if (hasCrashExploded_) {
-            crashExplosionTimer_ += kDeltaTime;
-            // 地面激突爆発から1.2秒経過したらGameOver画面へ切り替え
-            if (crashExplosionTimer_ >= 1.2f) {
-                SceneManager::GetInstance()->ChangeScene("GAMEOVER");
-                return;
-            }
-        }
-    }
-
-    if (isTitleMode_) {
-        playerHP_ = playerMaxHP_;
-    }
+    // スタート演出ブランチ用：演出確認中にゲームオーバーにならないよう常に最大HPを維持
+    playerHP_ = playerMaxHP_;
 
     // HPVisualの補間更新（滑らかなHPバー減少用）
     playerHPVisual_ = std::lerp(playerHPVisual_, playerHP_, 0.1f);
@@ -2159,16 +2004,6 @@ void GamePlayScene::Update() {
                     }
                 }
 
-                // 画面シェイク・ラジアルブラー・爆発加速SE
-                cameraShakeTimer_ = 0.38f;
-                cameraShakeTimeMax_ = 0.38f;
-                cameraShakeIntensity_ = 2.8f;
-                activeShakeIntensity_ = 2.8f;
-
-                useRadialBlur_ = true;
-                blurIntensity_ = 0.055f;
-                maxBlurWidth_ = 0.055f;
-
                 if (audio_) {
                     PlaySE(jumpSE_, false, 1.6f);
                 }
@@ -2192,15 +2027,6 @@ void GamePlayScene::Update() {
                     particleManager_->EmitCustomSparks(currentFighterPos, 135.0f, 35, primary3D, 0.3f);
                 }
 
-                cameraShakeTimer_ = 0.22f;
-                cameraShakeTimeMax_ = 0.22f;
-                cameraShakeIntensity_ = 1.8f;
-                activeShakeIntensity_ = 1.8f;
-
-                useRadialBlur_ = true;
-                blurIntensity_ = 0.042f;
-                maxBlurWidth_ = 0.042f;
-
                 if (audio_) {
                     PlaySE(jumpSE_, false, 1.35f);
                 }
@@ -2221,19 +2047,79 @@ void GamePlayScene::Update() {
                 StartPhaseIntro(2); // PHASE 2の表示演出
             } else if (currentPhase_ == GamePhase::kPhase2) {
                 currentPhase_ = GamePhase::kBossFight;
-                bossAppearanceTimer_ = 7.5f; // WARNING演出(2.5s) → ボス落下登場演出(5.0s) の全7.5秒
+                bossAppearanceTimer_ = 9.0f; // WARNING演出(2.5s) → ボス登場カメラ演出(5.0s: 2.5〜7.5s) → 登場完了後の咆哮演出(1.5s: 7.5〜9.0s) の全9.0秒
                 warningScrollOffset_ = 0.0f;
+                warningLastBeatIndex_ = -1;
+                bossZOffset_ = 169.0f;
+                bossTime_ = 0.0f;
+                isBossLanded_ = false;
+                isBossRoared_ = false;
                 hasEmittedJumpStart_ = false;
                 hasEmittedJumpEnd_ = false;
+                bossActionState_ = BossActionState::kIdle;
+                bossActionTimer_ = 0.0f;
             }
         }
     }
 
-    // ── ボス登場前WARNING＆落下演出タイマーの更新 ──
+    // ── ボス登場前WARNING＆落下・公転カメラ・咆哮演出タイマーの更新 ──
     if (bossAppearanceTimer_ > 0.0f) {
         bossAppearanceTimer_ -= kDeltaTime;
         warningScrollOffset_ += kDeltaTime;
-        float t = 7.5f - bossAppearanceTimer_; // 0.0f から 7.5f (0.0〜2.5秒は純粋なWARNING予告フェーズ)
+        float t = 9.0f - bossAppearanceTimer_; // 0.0f から 9.0f (0.0〜2.5s: WARNING / 2.5〜7.5s: 登場カメラ演出 / 7.55〜9.0s: 登場完了後の咆哮)
+
+        // 0. WARNING予告フェーズ (0.0s ～ 2.5s): 画面揺れ・ブラーなしで3D緊急気流＆スパーク・SEのみ再生
+        if (t < 2.5f && !isTitleMode_) {
+            useRadialBlur_ = false;
+            blurIntensity_ = 0.0f;
+            cameraShakeTimer_ = 0.0f;
+            activeShakeIntensity_ = 0.0f;
+
+            Vector3 pRailPos = GetRailPosition(fighterWorldZ_);
+            Vector3 pRailDir = GetRailDirection(fighterWorldZ_);
+            Vector3 pRailRight = CalculateRailRight(pRailDir);
+            Vector3 pRailUp = CalculateRailUp(pRailDir, pRailRight);
+            float pOffsetUp = (fighterModel_ ? fighterModel_->transform.translate.y : 0.0f) + 17.0f;
+            float pOffsetRight = (fighterModel_ ? fighterModel_->transform.translate.x : 0.0f);
+            Vector3 currentFighterPos = Add(pRailPos, Add(Scale(pRailRight, pOffsetRight), Scale(pRailUp, pOffsetUp)));
+
+            Vector3 alertRed   = { 1.0f, 0.15f, 0.12f };
+            Vector3 alertAmber = { 1.0f, 0.78f, 0.15f };
+
+            int beatIdx = static_cast<int>(t / 0.50f); // 0.0s, 0.5s, 1.0s, 1.5s, 2.0s(一閃分割退場)
+            if (beatIdx != warningLastBeatIndex_) {
+                warningLastBeatIndex_ = beatIdx;
+                bool isMajorImpact = (beatIdx == 0 || beatIdx == 4);
+
+                if (particleManager_) {
+                    if (beatIdx == 0) {
+                        // 突入ロックオン時の衝撃波＆赤雷放電
+                        particleManager_->EmitMegaRing(currentFighterPos, alertRed);
+                        particleManager_->EmitRing(currentFighterPos, alertAmber);
+                        particleManager_->EmitSlash(currentFighterPos, 115.0f, 24, alertAmber);
+                        particleManager_->EmitCustomSparks(currentFighterPos, 145.0f, 40, alertRed, 0.32f);
+                    } else if (beatIdx == 4) {
+                        // 2.0秒時点：中央一閃スラッシュ分割退場エフェクト
+                        particleManager_->EmitRing(currentFighterPos, alertAmber);
+                        particleManager_->EmitSlash(currentFighterPos, 130.0f, 28, alertRed);
+                        particleManager_->EmitCustomSparks(currentFighterPos, 135.0f, 35, alertAmber, 0.30f);
+                    } else {
+                        // サイレン鼓動ビート
+                        particleManager_->EmitRing(currentFighterPos, alertRed);
+                        particleManager_->EmitCustomSparks(currentFighterPos, 95.0f, 20, alertAmber, 0.25f);
+                    }
+                }
+
+                if (audio_) {
+                    PlaySE(jumpSE_, false, isMajorImpact ? 1.55f : 1.15f);
+                }
+            }
+
+            // WARNING中の連続緊急気流
+            if (particleManager_) {
+                particleManager_->EmitAeroWind(currentFighterPos, 120.0f, 3, alertRed);
+            }
+        }
 
         // ① 4.3秒時点で着地 (1回限り) (※2.5秒からボスが降下開始し、4.3秒で着地)
         if (t >= 4.3f && !isBossLanded_) {
@@ -2255,14 +2141,14 @@ void GamePlayScene::Update() {
             particleManager_->EmitCylinder(landPos);
         }
 
-        // ② 6.0秒時点で咆哮・ビル吹き飛ばし (1回限り)
-        if (t >= 6.0f && !isBossRoared_) {
+        // ② ボス登場カメラシーン完了後（7.55秒時点、カメラがプレイヤー背後に完全復帰した後）に咆哮・ビル吹き飛ばし (1回限り)
+        if (t >= 7.55f && !isBossRoared_) {
             isBossRoared_ = true;
-            // 咆哮の大シェイク！ (シェイクの激しさを向上)
-            cameraShakeTimer_ = 1.20f;
-            cameraShakeIntensity_ = 10.0f;
-            activeShakeIntensity_ = 10.0f;
-            cameraShakeTimeMax_ = 1.20f;
+            // 咆哮のシェイク（控えめな揺れに調整）
+            cameraShakeTimer_ = 1.25f;
+            cameraShakeIntensity_ = 0.9f;
+            activeShakeIntensity_ = 0.9f;
+            cameraShakeTimeMax_ = 1.25f;
             
             // 画面全体を赤いフラッシュで染める (フェードアウトは自動実行)
             flashColor_ = { 1.0f, 0.15f, 0.15f };
@@ -2293,6 +2179,9 @@ void GamePlayScene::Update() {
 
             // 周囲のビルを衝撃波で吹き飛ばす
             Vector3 roarPos = GetBossPosition(0.0f, 0.0f, 0.0f);
+            float bossProgress = fighterWorldZ_ + bossZOffset_;
+            Vector3 bRailDir = GetRailDirection(bossProgress);
+            Vector3 bRailRight = CalculateRailRight(bRailDir);
             for (size_t i = 0; i < buildings_.size(); ++i) {
                 if (!buildings_[i].isDestroyed) {
                     Vector3 diff = Subtract(buildings_[i].position, roarPos);
@@ -2301,30 +2190,49 @@ void GamePlayScene::Update() {
                         buildings_[i].isDestroyed = true;
                         buildings_[i].destroyTimer = 0.0f;
                         
-                        // 咆哮の風圧で外側へ激しく吹き飛ばす
-                        float signX = (buildings_[i].position.x >= 0.0f) ? 1.0f : -1.0f;
-                        buildings_[i].velocity = { signX * 85.0f, 70.0f, -20.0f + (float)(randomEngine_() % 30) };
+                        // 咆哮の風圧でボスから外側へ激しく吹き飛ばす
+                        float sideDot = diff.x * bRailRight.x + diff.z * bRailRight.z;
+                        float signSide = (sideDot >= 0.0f) ? 1.0f : -1.0f;
+                        Vector3 outDir = Scale(bRailRight, signSide * 85.0f);
+                        buildings_[i].velocity = { outDir.x, 70.0f, outDir.z - 20.0f + (float)(randomEngine_() % 30) };
                         buildings_[i].rotationSpeed = {
                             ((float)(randomEngine_() % 200) / 100.0f) - 1.0f,
                             ((float)(randomEngine_() % 200) / 100.0f) - 1.0f,
-                            signX * 4.0f
+                            signSide * 4.0f
                         };
                     }
                 }
             }
         }
 
-        // ③ 咆哮継続中のエネルギー連続噴出演出 ＆ 空気の振動ブラー(集中線) ＆ FOVズーム (6.0s ～ 7.5s)
-        if (t >= 6.0f && t < 7.5f) {
-            float roarProgress = (t - 6.0f) / 1.5f;
+        // ③ 登場シーン完了後の咆哮エネルギー連続噴出演出 ＆ 画面揺れ・空気の振動ブラー(集中線) ＆ FOVズーム (7.55s ～ 9.0s)
+        if (t >= 7.55f && t < 9.0f) {
+            float roarProgress = std::clamp((t - 7.55f) / 1.45f, 0.0f, 1.0f);
             float easeRoar = std::sin(roarProgress * static_cast<float>(M_PI)); // 0 -> 1 -> 0
 
-            // ① 空気の振動ブラー (ラジアルブラーによる集中線)
+            // ① 空気の振動ブラー (ラジアルブラーによる集中線：ごく控えめな強度 0.005f に調整)
+            // 後続の通常ブースト制御で kNone に上書きされないよう useRadialBlur_ と blurIntensity_ も同期更新する
+            float roarBlur = 0.005f * easeRoar;
+            useRadialBlur_ = true;
+            blurIntensity_ = roarBlur;
+            maxBlurWidth_ = 0.005f;
             activePostProcess_ = kRadialBlur;
             if (radialBlurParamData_) {
                 radialBlurParamData_->center = { 0.5f, 0.5f };
-                radialBlurParamData_->blurWidth = -0.06f * easeRoar;
+                radialBlurParamData_->blurWidth = -roarBlur;
             }
+
+            // 咆哮中の連続画面シェイク（控えめな揺れ幅 0.9f に抑える）
+            cameraShakeTimer_ = 0.15f;
+            cameraShakeTimeMax_ = 0.15f;
+            cameraShakeIntensity_ = 0.9f * easeRoar;
+            activeShakeIntensity_ = 0.9f * easeRoar;
+            std::uniform_real_distribution<float> distRoarShake(-1.0f, 1.0f);
+            cameraShakeOffset_ = {
+                distRoarShake(randomEngine_) * activeShakeIntensity_,
+                distRoarShake(randomEngine_) * activeShakeIntensity_,
+                distRoarShake(randomEngine_) * activeShakeIntensity_
+            };
 
             // ② カメラのFOVズームイン＆アウト
             float fov = 0.45f;
@@ -2357,12 +2265,20 @@ void GamePlayScene::Update() {
             }
         }
 
-        // ④ 演出終了時のリセットとクリーンアップ
+        // ④ 演出終了時のリセットとクリーンアップ（スタート演出ブランチでは演出終了後に自動でタイトルへループ）
         if (bossAppearanceTimer_ <= 0.0f) {
             bossAppearanceTimer_ = -1.0f;
             camera_->ClearTarget(); // 演出終了時に確実に注視ターゲットを解除
             camera_->SetFov(0.45f); // FOVを確実に初期値に戻す
+            useRadialBlur_ = false;
+            blurIntensity_ = 0.0f;
+            cameraShakeTimer_ = 0.0f;
+            cameraShakeOffset_ = { 0.0f, 0.0f, 0.0f };
             activePostProcess_ = kNone; // ラジアルブラーを解除
+            if (!isTitleMode_) {
+                SceneManager::GetInstance()->ChangeScene("TITLE");
+                return;
+            }
         }
     }
 
@@ -2700,8 +2616,9 @@ void GamePlayScene::Update() {
     if (input_->IsKeyTriggered(DIK_B)) {
         if (currentPhase_ != GamePhase::kBossFight) {
             currentPhase_ = GamePhase::kBossFight;
-            bossAppearanceTimer_ = 7.5f; // WARNING演出(2.5s) → ボス落下登場演出(5.0s) 開始
+            bossAppearanceTimer_ = 9.0f; // WARNING演出(2.5s) → ボス登場カメラ演出(5.0s) → 登場完了後の咆哮(1.5s) 開始
             warningScrollOffset_ = 0.0f; // WARNINGアニメーション用スクロールタイマーリセット
+            warningLastBeatIndex_ = -1;
             phaseTimer_ = 0.0f;          // 通常フェーズのタイマーをリセット
             bossZOffset_ = 169.0f;       // ボスZオフセットを初期位置にリセット
             bossTime_ = 0.0f;            // ボスタイマーのリセット
@@ -2776,8 +2693,7 @@ void GamePlayScene::Update() {
         // --- 戦闘機（レールシューター）モード ---
 
         // ── ブースト処理（LSHIFTで発動、バレルロール終了と同時に自動で戻る） ────────────────
-        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
-        if (input_->IsKeyTriggered(DIK_LSHIFT) && !(phaseIntroTimer_ >= 0.0f) && !isBossIntro && !isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
+        if (input_->IsKeyTriggered(DIK_LSHIFT) && !(phaseIntroTimer_ >= 0.0f) && !isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
             if (!isBarrelRolling_) {
                 isBoosting_ = true;
                 isBarrelRolling_ = true;
@@ -2794,19 +2710,17 @@ void GamePlayScene::Update() {
                 boostBlurWidth_ = kBoostBlurMax * 0.25f; // 弱いラジアルブラーを適用
             }
         } else if (phaseIntroTimer_ >= 0.0f && !isTitleMode_) {
-            // フェーズ演出中のスピード＆ブラー制御
+            // フェーズ演出中のスピード制御（画面ブラーは発生させない）
             float pt = phaseIntroTimer_;
+            boostBlurWidth_ = 0.0f;
             if (pt < 0.42f) {
                 boostForwardSpeed_ = 115.0f;
-                boostBlurWidth_ = std::lerp(boostBlurWidth_, 0.008f, 0.15f);
             } else if (pt < 1.75f) {
                 float u = (pt - 0.42f) / (1.75f - 0.42f);
                 boostForwardSpeed_ = std::lerp(245.0f, 155.0f, u);
-                boostBlurWidth_ = std::lerp(0.026f, 0.014f, u);
             } else {
                 float u = std::clamp((pt - 1.75f) / (kPhaseIntroDuration - 1.75f), 0.0f, 1.0f);
                 boostForwardSpeed_ = std::lerp(155.0f, kNormalSpeed, u);
-                boostBlurWidth_ = std::lerp(0.018f, 0.0f, u);
             }
         } else if (isBoosting_) {
             boostBlurWidth_ += kBoostBlurFadeIn * kDeltaTime * kBoostBlurMax;
@@ -2835,16 +2749,10 @@ void GamePlayScene::Update() {
             }
         }
 
-        // ── 1. プレイヤーのワールドZ座標を自律前進（フェーズ演出中も前進・疾走感を維持） ──────────────────
+        // ── 1. プレイヤーのワールドZ座標を自律前進（フェーズ演出中およびWARNING予告中も前進・疾走感を維持） ──────────────────
+        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (9.0f - bossAppearanceTimer_) >= 2.5f);
         if (!isWaitingForTransition && !isBossIntro && !isBossDefeatedSequence_) {
-            if (isPlayerDead_) {
-                if (!hasCrashExploded_) {
-                    boostForwardSpeed_ = std::lerp(boostForwardSpeed_, 30.0f, 0.04f);
-                    fighterWorldZ_ += boostForwardSpeed_ * kDeltaTime;
-                }
-            } else {
-                fighterWorldZ_ += boostForwardSpeed_ * kDeltaTime;
-            }
+            fighterWorldZ_ += boostForwardSpeed_ * kDeltaTime;
         }
 
         // ── 2. カメラは等速追従をベースにしつつ、ブースト時やフェーズ演出時はG遅延を適用 ──
@@ -2886,14 +2794,31 @@ void GamePlayScene::Update() {
         if (fighterModel_) {
             Vector3 inputDir = {0,0,0};
             if ((phaseIntroTimer_ >= 0.0f || isBossIntro) && !isTitleMode_) {
-                // フェーズ演出中およびボス登場演出中は自機を画面中央へ滑らかにセンタリング固定（操作無効）
+                // フェーズ演出中およびボス降下カメラ中は自機を画面中央へ滑らかにセンタリングして見栄えを良くする
                 fighterModel_->transform.translate.x = std::lerp(fighterModel_->transform.translate.x, 0.0f, 0.12f);
                 fighterModel_->transform.translate.y = std::lerp(fighterModel_->transform.translate.y, 0.0f, 0.12f);
-            } else if (!isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_ && !isPlayerDead_ && !isBossIntro) {
+            } else if (!isWaitingForTransition && !isBossDefeatedSequence_ && !isTitleMode_) {
                 if (input_->IsKeyPressed(DIK_W)) inputDir.y += 1.0f;
                 if (input_->IsKeyPressed(DIK_S)) inputDir.y -= 1.0f;
                 if (input_->IsKeyPressed(DIK_A)) inputDir.x -= 1.0f;
                 if (input_->IsKeyPressed(DIK_D)) inputDir.x += 1.0f;
+
+                // 手動入力がない場合は、スタート演出確認用にプレイヤーを自動で少し動かす
+                if (inputDir.x == 0.0f && inputDir.y == 0.0f) {
+                    if (currentPhase_ == GamePhase::kPhase1) {
+                        // PHASE 1: 左上へバンク移動 ➔ 右下へ切り返し
+                        inputDir.x = (phaseTimer_ < 1.35f) ? -0.85f : 0.85f;
+                        inputDir.y = (phaseTimer_ < 1.35f) ?  0.35f : -0.30f;
+                    } else if (currentPhase_ == GamePhase::kPhase2) {
+                        // PHASE 2: 右上へバンク移動 ➔ 左下へ切り返し
+                        inputDir.x = (phaseTimer_ < 1.35f) ?  0.85f : -0.85f;
+                        inputDir.y = (phaseTimer_ < 1.35f) ?  0.35f : -0.30f;
+                    } else if (currentPhase_ == GamePhase::kBossFight && (9.0f - bossAppearanceTimer_) < 2.5f) {
+                        // WARNING予告フェーズ中は中央へ緩やかに戻しつつ微バンク
+                        fighterModel_->transform.translate.x = std::lerp(fighterModel_->transform.translate.x, 0.0f, 0.08f);
+                        fighterModel_->transform.translate.y = std::lerp(fighterModel_->transform.translate.y, 0.0f, 0.08f);
+                    }
+                }
             }
 
             if (inputDir.x != 0 || inputDir.y != 0) {
@@ -2913,25 +2838,6 @@ void GamePlayScene::Update() {
 
             fighterModel_->transform.translate.x = std::clamp(fighterModel_->transform.translate.x, -playerLimitX_, playerLimitX_);
             fighterModel_->transform.translate.y = std::clamp(fighterModel_->transform.translate.y, -playerLimitY_, playerLimitY_);
-
-            // ── 墜落中の自機キリモミ・急降下挙動の適用 ──
-            if (isPlayerDead_) {
-                if (!hasCrashExploded_) {
-                    // 下向き重力加速度（墜落）
-                    playerCrashVel_.y -= 38.0f * kDeltaTime;
-                    playerCrashLocalPos_.y += playerCrashVel_.y * kDeltaTime;
-                    playerCrashLocalPos_.x += playerCrashVel_.x * kDeltaTime;
-
-                    // 制御不能なキリモミ回転 (高速ロールスピン、下向きピッチ急降下、不規則な揺れ)
-                    playerCrashSpin_ += 16.0f * kDeltaTime;
-                    playerCrashPitch_ = std::lerp(playerCrashPitch_, -0.80f, 0.05f);
-                    playerCrashYaw_ += std::sin(playerDeathTimer_ * 14.0f) * 0.05f;
-
-                    fighterModel_->transform.translate = playerCrashLocalPos_;
-                } else {
-                    fighterModel_->transform.translate = playerCrashLocalPos_;
-                }
-            }
 
             int currentAngleIndex = 0;
             float localTime = 0.0f;
@@ -2961,60 +2867,6 @@ void GamePlayScene::Update() {
             // 基準高さは路面 -20.0f からプレイヤーは通常 -3.0f (つまり相対 +17.0f)
             float playerOffsetUp = fighterModel_->transform.translate.y + 17.0f;
             Vector3 fighterWorldPos = Add(playerRailPos, Add(Scale(playerRailRight, fighterModel_->transform.translate.x), Scale(playerRailUp, playerOffsetUp)));
-
-            // ── 墜落中の黒煙＆火花エミット ＆ 地面衝突判定 ──
-            if (isPlayerDead_) {
-                if (!hasCrashExploded_) {
-                    // 自機からモクモクと激しい黒煙と火の粉を放出
-                    Vector3 forwardVel = Scale(playerRailDir, boostForwardSpeed_);
-                    EmitCrashSmoke(fighterWorldPos, forwardVel, false); // 黒煙
-                    EmitCrashSmoke(fighterWorldPos, forwardVel, false); // 黒煙2
-                    if ((randomEngine_() % 3) == 0) {
-                        EmitCrashSmoke(fighterWorldPos, forwardVel, true); // 火炎・火の粉
-                    }
-                    if (particleManager_ && (randomEngine_() % 2) == 0) {
-                        particleManager_->EmitCustomSparks(fighterWorldPos, 35.0f, 3, { 1.0f, 0.6f, 0.1f }, 0.8f);
-                    }
-
-                    // 地面衝突判定（路面はY=-20.0f、playerOffsetUp <= 1.0f、またはローカルY <= -16.0f、または2.0秒経過）
-                    if (playerOffsetUp <= 1.0f || playerCrashLocalPos_.y <= -16.0f || playerDeathTimer_ >= 2.0f) {
-                        hasCrashExploded_ = true;
-                        isFighterDestroyed_ = true;
-                        crashSitePos_ = fighterWorldPos;
-                        crashSitePos_.y = -20.0f; // 確実に路面高さに固定
-
-                        // 地面激突の大爆発！（火炎、火花、衝撃波シリンダー、黒煙のみ）
-                        if (particleManager_) {
-                            particleManager_->EmitFlame(crashSitePos_, 45.0f, 80, { 1.0f, 0.4f, 0.05f });
-                            particleManager_->EmitCustomSparks(crashSitePos_, 180.0f, 100, { 1.0f, 0.85f, 0.2f }, 2.0f);
-                            particleManager_->EmitMegaRing(crashSitePos_, { 1.0f, 0.5f, 0.1f });
-                            particleManager_->EmitMegaCylinder(crashSitePos_, { 1.0f, 0.4f, 0.1f });
-                        }
-                        if (audio_) {
-                            PlaySE(jumpSE_, false, 2.5f);
-                        }
-
-                        // 爆発の瞬間、激震シェイクと強烈な爆発フラッシュ
-                        cameraShakeTimer_ = 0.85f;
-                        cameraShakeIntensity_ = 10.0f;
-                        activeShakeIntensity_ = 10.0f;
-                        cameraShakeTimeMax_ = 0.85f;
-
-                        flashAlpha_ = 1.0f;
-                        flashColor_ = { 1.0f, 0.65f, 0.15f, 1.0f };
-
-                        useRadialBlur_ = true;
-                        blurIntensity_ = 0.09f;
-                        maxBlurWidth_ = 0.09f;
-                    }
-                } else {
-                    // 激突後：燃え盛るクレーターから黒煙が立ち上り続ける
-                    EmitCrashSmoke(crashSitePos_, { 0.0f, 5.0f, 0.0f }, false);
-                    if ((randomEngine_() % 4) == 0) {
-                        EmitCrashSmoke(crashSitePos_, { 0.0f, 4.0f, 0.0f }, true);
-                    }
-                }
-            }
 
             if (isTitleMode_) {
                 if (isTitleTransitioning_) {
@@ -3062,27 +2914,27 @@ void GamePlayScene::Update() {
                     Vector3 cameraTarget = { 0,0,0 };
 
                 if (currentAngleIndex == 0) {
-                    // アングル1: 右斜め後ろの低い位置から見上げる
-                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailRight, 20.0f), Add(Scale(playerRailDir, -35.0f), Scale(playerRailUp, 8.0f))));
-                    cameraTarget = Add(fighterWorldPos, Scale(playerRailUp, 2.0f));
+                    // アングル1: 右斜め後ろの近い低い位置から見上げる（自機を画面中央〜やや下に大きく映す）
+                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailRight, 15.0f), Add(Scale(playerRailDir, -26.0f), Scale(playerRailUp, 9.5f))));
+                    cameraTarget = Add(fighterWorldPos, Scale(playerRailUp, 5.2f));
                 }
                 else if (currentAngleIndex == 1) {
-                    // アングル2: 正面クローズアップ（前方から見下ろす）
-                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailRight, -8.0f), Add(Scale(playerRailDir, 45.0f), Scale(playerRailUp, 25.0f))));
-                    cameraTarget = fighterWorldPos;
+                    // アングル2: 正面斜め前クローズアップ（自機を近くでダイナミックに捉えつつ上部にタイトル空間を確保）
+                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailRight, -9.0f), Add(Scale(playerRailDir, 28.0f), Scale(playerRailUp, 19.5f))));
+                    cameraTarget = Add(fighterWorldPos, Scale(playerRailUp, 4.5f));
                 }
                 else if (currentAngleIndex == 2) {
-                    // アングル3: 上空からのダイナミック俯瞰（ゆっくり旋回）
-                    float angle = localTime * 0.2f - 0.5f;
-                    Vector3 offset = Add(Scale(playerRailDir, -55.0f), Scale(playerRailRight, std::sin(angle) * 30.0f));
-                    targetCamPos = Add(playerRailPos, Add(offset, Scale(playerRailUp, 45.0f)));
-                    cameraTarget = Add(fighterWorldPos, Scale(playerRailDir, 10.0f));
+                    // アングル3: 後方斜め上からの近接ダイナミック旋回（遠すぎず自機がはっきり見える距離に調整）
+                    float angle = localTime * 0.25f - 0.5f;
+                    Vector3 offset = Add(Scale(playerRailDir, -32.0f), Scale(playerRailRight, std::sin(angle) * 20.0f));
+                    targetCamPos = Add(playerRailPos, Add(offset, Scale(playerRailUp, 27.0f)));
+                    cameraTarget = Add(fighterWorldPos, Add(Scale(playerRailDir, 6.0f), Scale(playerRailUp, 4.2f)));
                 }
                 else {
-                    // アングル4: サイド並走カメラ（真横から並走して流し撮り）
-                    float forwardOffset = (localTime - 3.0f) * 8.0f;
-                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailDir, forwardOffset), Add(Scale(playerRailRight, -40.0f), Scale(playerRailUp, 18.0f))));
-                    cameraTarget = fighterWorldPos;
+                    // アングル4: サイド近接並走カメラ（真横〜斜め横の至近距離で自機を大きく流し撮り）
+                    float forwardOffset = (localTime - 3.0f) * 4.2f;
+                    targetCamPos = Add(playerRailPos, Add(Scale(playerRailDir, forwardOffset), Add(Scale(playerRailRight, -26.0f), Scale(playerRailUp, 17.5f))));
+                    cameraTarget = Add(fighterWorldPos, Scale(playerRailUp, 4.5f));
                 }
 
                 if (isCut) {
@@ -3139,11 +2991,6 @@ void GamePlayScene::Update() {
                 Vector3 camBackVector = Scale(playerRailDir, -currentDist);
                 Vector3 targetCamPos = Add(playerRailPos, Add(camBackVector, Add(Scale(playerRailRight, camRelativeX_), Scale(playerRailUp, camOffsetUp))));
 
-                // 墜落時はカメラが地面に潜らないよう下限高さを担保
-                if (isPlayerDead_ && targetCamPos.y < -15.0f) {
-                    targetCamPos.y = -15.0f;
-                }
-
                 // カメラ位置のスムーズ追従 (Smooth Follow、遷移待機中は即座に初期定位置へ固定)
                 float posLerpFactor = isWaitingForTransition ? 1.0f : 0.12f;
                 Vector3 camDiff = Subtract(targetCamPos, camTrans.translate);
@@ -3156,10 +3003,10 @@ void GamePlayScene::Update() {
 
                 // ── カメラの注視ターゲット（LookAhead & LookAt）の計算 ──
                 // プレイヤーの少し先（20.0m 先）を注視点とする
-                float lookAheadDist = isPlayerDead_ ? 5.0f : 20.0f;
+                float lookAheadDist = 20.0f;
                 Vector3 lookAheadTarget = Add(fighterWorldPos, Scale(playerRailDir, lookAheadDist));
                 // プレイヤーの少し上（5.0m 上）を狙う
-                Vector3 cameraTarget = Add(lookAheadTarget, Scale(playerRailUp, isPlayerDead_ ? 2.0f : 5.0f));
+                Vector3 cameraTarget = Add(lookAheadTarget, Scale(playerRailUp, 5.0f));
 
                 // カメラの現在位置から注視ターゲットへの方向ベクトル
                 Vector3 lookDir = Subtract(cameraTarget, camTrans.translate);
@@ -3207,7 +3054,6 @@ void GamePlayScene::Update() {
             // ── 5. 機体の傾き（通常ロール/ピッチ + バレルロール合成） ──
             float baseRoll  = inputDir.x * -kMaxRollAngle;
             float basePitch = inputDir.y * 0.4f;
-            if (isBossIntro) { baseRoll = 0.0f; basePitch = 0.0f; }
             if (phaseIntroTimer_ >= 0.0f && !isTitleMode_) {
                 // フェーズ演出中のソニックブーム加速に伴う軽やかな上昇ピッチ演出
                 float pt = phaseIntroTimer_;
@@ -3220,10 +3066,6 @@ void GamePlayScene::Update() {
             playerRotationPitch_ = std::lerp(playerRotationPitch_, basePitch, 0.1f);
 
             float rollAngle = playerRotationRoll_;
-            if (isPlayerDead_) {
-                rollAngle = playerCrashSpin_;
-                playerRotationPitch_ = playerCrashPitch_;
-            }
 
             // フェーズ演出中の高速バレルロール＆退場スナップロール演出
             if (phaseIntroTimer_ >= 0.0f && !isTitleMode_) {
@@ -3261,10 +3103,6 @@ void GamePlayScene::Update() {
             }
 
             fighterModel_->transform.rotate.z = rollAngle;
-            if (isPlayerDead_) {
-                fighterModel_->transform.rotate.x = playerCrashPitch_;
-                fighterModel_->transform.rotate.y = playerCrashYaw_;
-            }
 
             // 機体自体の向きをレールの進行方向に滑らかに合わせる
             float basePlayerRotY = std::atan2(playerRailDir.x, playerRailDir.z);
@@ -3291,178 +3129,178 @@ void GamePlayScene::Update() {
             R_rail.m[2][0] = playerRailDir.x;   R_rail.m[2][1] = playerRailDir.y;   R_rail.m[2][2] = playerRailDir.z;
 
             // モデルのローカル回転 (Z:ロール -> X:ピッチ -> Y:180度反転)
-            Matrix4x4 rotateY = MakeRotateYMatrix(static_cast<float>(M_PI) + (isPlayerDead_ ? playerCrashYaw_ : 0.0f));
+            Matrix4x4 rotateY = MakeRotateYMatrix(static_cast<float>(M_PI));
             Matrix4x4 rotateX = MakeRotateXMatrix(playerRotationPitch_);
             Matrix4x4 rotateZ = MakeRotateZMatrix(rollAngle);
             Matrix4x4 R_local = Multiply(Multiply(rotateZ, rotateX), rotateY);
 
             // 最終姿勢行列の算出とワールド行列の組み立て
             Matrix4x4 R_final = Multiply(R_local, R_rail);
-            Vector3 fScale = isFighterDestroyed_ ? Vector3{ 0.0f, 0.0f, 0.0f } : fighterModel_->transform.scale;
-            Matrix4x4 scaleMatrix = MakeScaleMatrix(fScale);
+            Matrix4x4 scaleMatrix = MakeScaleMatrix(fighterModel_->transform.scale);
             Matrix4x4 translateMatrix = MakeTranslateMatrix(fighterWorldPos);
             fighterTransformData_->World = Multiply(Multiply(scaleMatrix, R_final), translateMatrix);
 
 
-            // ── ボス登場演出中のカメラワーク上書き ──
+            // ── ボス登場演出中のカメラワーク上書き（WARNING 2.5秒終了後の 2.5s〜7.5s の5.0秒間のみ適用し、7.5sでカメラ復帰完了後に咆哮へ移行） ──
             if (!isBossDefeatedSequence_ && currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f) {
-                float total_t = 7.5f - bossAppearanceTimer_; // 0.0f から 7.5f
-                if (total_t >= 2.5f) {
-                    float t = total_t - 2.5f; // 0.0f から 5.0f
-                
-                // ボスの落下オフセット（1.8秒で着地）
-                float dropOffset = 0.0f;
-                if (t < 1.8f) {
-                    float appRate = t / 1.8f;
-                    dropOffset = 120.0f * (1.0f - appRate) * (1.0f - appRate);
-                }
-                Vector3 bossDropPos = GetBossPosition(0.0f, dropOffset);
+                float t_total = 9.0f - bossAppearanceTimer_;
+                if (t_total >= 2.5f && t_total < 7.5f) {
+                    float t = t_total - 2.5f; // 0.0f から 5.0f (0.0〜1.8s: 落下 / 1.8〜4.0s: 360度公転 / 4.0〜5.0s: プレイヤー背後へカメラ復帰)
+                    
+                    // ボスの落下オフセット（1.8秒で着地）
+                    float dropOffset = 0.0f;
+                    if (t < 1.8f) {
+                        float appRate = t / 1.8f;
+                        dropOffset = 120.0f * (1.0f - appRate) * (1.0f - appRate);
+                    }
+                    Vector3 bossDropPos = GetBossPosition(0.0f, dropOffset);
 
-                // カメラ演出用のレール姿勢の事前計算
-                Vector3 playerRailPos = GetRailPosition(fighterWorldZ_);
-                Vector3 playerRailDir = GetRailDirection(fighterWorldZ_);
-                Vector3 playerRailRight = CalculateRailRight(playerRailDir);
-                Vector3 playerRailUp = CalculateRailUp(playerRailDir, playerRailRight);
+                    // カメラ演出用のレール姿勢の事前計算
+                    Vector3 playerRailPos = GetRailPosition(fighterWorldZ_);
+                    Vector3 playerRailDir = GetRailDirection(fighterWorldZ_);
+                    Vector3 playerRailRight = CalculateRailRight(playerRailDir);
+                    Vector3 playerRailUp = CalculateRailUp(playerRailDir, playerRailRight);
 
-                Vector3 camPos{};
-                Vector3 camRot{};
+                    Vector3 camPos{};
+                    Vector3 camRot{};
 
-                // 通常のカメラ開始位置・目標位置
-                float targetCamX = fighterModel_ ? fighterModel_->transform.translate.x * 0.5f : 0.0f;
-                float targetCamY = fighterModel_ ? fighterModel_->transform.translate.y * 0.5f : 0.0f;
-                float targetY = fighterModel_ ? fighterModel_->transform.translate.y * 0.5f : 0.0f;
+                    // 通常のカメラ開始位置・目標位置
+                    float targetCamX = fighterModel_ ? fighterModel_->transform.translate.x * 0.5f : 0.0f;
+                    float targetCamY = fighterModel_ ? fighterModel_->transform.translate.y * 0.5f : 0.0f;
+                    float targetY = fighterModel_ ? fighterModel_->transform.translate.y * 0.5f : 0.0f;
 
-                float dist = 140.0f; // 旋回半径
+                    float dist = 140.0f; // 旋回半径
 
-                if (t < 1.8f) {
-                    // --- フェーズ1: 落下見上げ (t: 0.0s ～ 1.8s) ---
-                    float t_phase1 = t / 1.8f;
-                    float easedT = t_phase1 * t_phase1 * (3.0f - 2.0f * t_phase1); // Smoothstep
+                    if (t < 1.8f) {
+                        // --- フェーズ1: 落下見上げ (t: 0.0s ～ 1.8s) ---
+                        float t_phase1 = t / 1.8f;
+                        float easedT = t_phase1 * t_phase1 * (3.0f - 2.0f * t_phase1); // Smoothstep
 
-                    // 開始位置（戦闘機背後、レール追従）
-                    Vector3 startPos = Add(playerRailPos, Add(Scale(playerRailRight, targetCamX), Add(Scale(playerRailUp, targetCamY + 26.0f), Scale(playerRailDir, -65.0f))));
-                    // 目標位置（地面近く、レール追従）
-                    Vector3 targetPos = Add(playerRailPos, Add(Scale(playerRailUp, 4.0f), Scale(playerRailDir, -15.0f)));
+                        // 開始位置（戦闘機背後、レール追従）
+                        Vector3 startPos = Add(playerRailPos, Add(Scale(playerRailRight, targetCamX), Add(Scale(playerRailUp, targetCamY + 26.0f), Scale(playerRailDir, -65.0f))));
+                        // 目標位置（地面近く、レール追従）
+                        Vector3 targetPos = Add(playerRailPos, Add(Scale(playerRailUp, 4.0f), Scale(playerRailDir, -15.0f)));
 
-                    camPos = {
-                        std::lerp(startPos.x, targetPos.x, easedT),
-                        std::lerp(startPos.y, targetPos.y, easedT),
-                        std::lerp(startPos.z, targetPos.z, easedT)
-                    };
-
-                    camera_->SetTarget(&bossDropPos); // ボスをロックオン
-                }
-                else if (t < 4.0f) {
-                    // --- フェーズ2: ボスを中心とした上空からの360度公転旋回 (t: 1.8s ～ 4.0s) ---
-                    float t_spin = (t - 1.8f) / 2.2f;
-                    float easedT = t_spin * t_spin * (3.0f - 2.0f * t_spin); // Smoothstep
-
-                    // 旋回角度（ヨー）: 時計回りに360度公転 (2*PI から 0.0 へ)
-                    float yawAngle = (1.0f - easedT) * 2.0f * static_cast<float>(M_PI);
-
-                    // Y高さ: ボスの上空 (+30.0f) から、らせんの終端高さ (+45.0f) へ徐々に上昇させる
-                    float camY = bossDropPos.y + 30.0f + (15.0f * easedT);
-
-                    // レールのローカル軸を取得して、らせん公転位置をレール系で計算
-                    float bossProgress = fighterWorldZ_ + bossZOffset_;
-                    Vector3 bossRailDir = GetRailDirection(bossProgress);
-                    Vector3 bossRailRight = Normalize(Vector3{ bossRailDir.z, 0.0f, -bossRailDir.x });
-                    Vector3 bossRailUp = Cross(bossRailDir, bossRailRight);
-
-                    // カメラの本来の公転位置
-                    Vector3 orbitPos = Add(bossDropPos, Add(
-                        Scale(bossRailRight, -std::sin(yawAngle) * dist),
-                        Add(Scale(bossRailUp, 30.0f + (15.0f * easedT)), Scale(bossRailDir, -std::cos(yawAngle) * dist))
-                    ));
-
-                    // 1.8s切り替え時のワープを防ぐため、フェーズ1の終了位置からのスムーズなブレンド接続 (最初の0.8秒)
-                    float blendDuration = 0.8f;
-                    float elapsedInPhase2 = t - 1.8f;
-                    if (elapsedInPhase2 < blendDuration) {
-                        float blendRate = elapsedInPhase2 / blendDuration;
-                        float easedBlend = blendRate * blendRate * (3.0f - 2.0f * blendRate); // Smoothstep
-
-                        // フェーズ1の終了位置（地面近く、レール追従）
-                        Vector3 lastPos = Add(playerRailPos, Add(Scale(playerRailUp, 4.0f), Scale(playerRailDir, -15.0f)));
                         camPos = {
-                            std::lerp(lastPos.x, orbitPos.x, easedBlend),
-                            std::lerp(lastPos.y, orbitPos.y, easedBlend),
-                            std::lerp(lastPos.z, orbitPos.z, easedBlend)
+                            std::lerp(startPos.x, targetPos.x, easedT),
+                            std::lerp(startPos.y, targetPos.y, easedT),
+                            std::lerp(startPos.z, targetPos.z, easedT)
                         };
-                    } else {
-                        camPos = orbitPos;
+
+                        camera_->SetTarget(&bossDropPos); // ボスをロックオン
+                    }
+                    else if (t < 4.0f) {
+                        // --- フェーズ2: ボスを中心とした上空からの360度公転旋回 (t: 1.8s ～ 4.0s) ---
+                        float t_spin = (t - 1.8f) / 2.2f;
+                        float easedT = t_spin * t_spin * (3.0f - 2.0f * t_spin); // Smoothstep
+
+                        // 旋回角度（ヨー）: 時計回りに360度公転 (2*PI から 0.0 へ)
+                        float yawAngle = (1.0f - easedT) * 2.0f * static_cast<float>(M_PI);
+
+                        // レールのローカル軸を取得して、らせん公転位置をレール系で計算
+                        float bossProgress = fighterWorldZ_ + bossZOffset_;
+                        Vector3 bossRailDir = GetRailDirection(bossProgress);
+                        Vector3 bossRailRight = Normalize(Vector3{ bossRailDir.z, 0.0f, -bossRailDir.x });
+                        Vector3 bossRailUp = Cross(bossRailDir, bossRailRight);
+
+                        // カメラの本来の公転位置
+                        Vector3 orbitPos = Add(bossDropPos, Add(
+                            Scale(bossRailRight, -std::sin(yawAngle) * dist),
+                            Add(Scale(bossRailUp, 30.0f + (15.0f * easedT)), Scale(bossRailDir, -std::cos(yawAngle) * dist))
+                        ));
+
+                        // 1.8s切り替え時のワープを防ぐため、フェーズ1の終了位置からのスムーズなブレンド接続 (最初の0.8秒)
+                        float blendDuration = 0.8f;
+                        float elapsedInPhase2 = t - 1.8f;
+                        if (elapsedInPhase2 < blendDuration) {
+                            float blendRate = elapsedInPhase2 / blendDuration;
+                            float easedBlend = blendRate * blendRate * (3.0f - 2.0f * blendRate); // Smoothstep
+
+                            // フェーズ1の終了位置（地面近く、レール追従）
+                            Vector3 lastPos = Add(playerRailPos, Add(Scale(playerRailUp, 4.0f), Scale(playerRailDir, -15.0f)));
+                            camPos = {
+                                std::lerp(lastPos.x, orbitPos.x, easedBlend),
+                                std::lerp(lastPos.y, orbitPos.y, easedBlend),
+                                std::lerp(lastPos.z, orbitPos.z, easedBlend)
+                            };
+                        } else {
+                            camPos = orbitPos;
+                        }
+
+                        camera_->SetTarget(&bossDropPos); // ボスをロックオン
+                    }
+                    else {
+                        // --- フェーズ3: 旋回完了位置からプレイヤー背後の通常アングルへのスムーズな復帰 (t: 4.0s ～ 5.0s) ---
+                        // ※咆哮はカメラ復帰完了後 (t_total >= 7.55s) に発動させるため、ここでは揺らさず滑らかにプレイヤー背後へ戻す
+                        camera_->ClearTarget(); // ターゲットを解除して通常アングルの首振り角度（オイラー角）補間に戻す
+
+                        float t_phase3 = (t - 4.0f) / 1.0f;
+                        float easedT = t_phase3 * t_phase3 * (3.0f - 2.0f * t_phase3); // Smoothstep
+
+                        // 4.0s時点のボス位置（着地状態なのでdropOffset=0）
+                        Vector3 bossDropPos35 = GetBossPosition(0.0f);
+                        
+                        float bossProgress = fighterWorldZ_ + bossZOffset_;
+                        Vector3 bRailDir = GetRailDirection(bossProgress);
+                        Vector3 bRailRight = CalculateRailRight(bRailDir);
+                        Vector3 bRailUp = CalculateRailUp(bRailDir, bRailRight);
+
+                        // 旋回完了時の位置（ボスの後方上空、らせんの終端高さ 45.0f に合わせる、レール追従）
+                        Vector3 startPos = Add(bossDropPos35, Add(Scale(bRailDir, -dist), Scale(bRailUp, 45.0f)));
+                        // 通常位置（戦闘機背後、レール追従）
+                        Vector3 targetPos = Add(playerRailPos, Add(Scale(playerRailRight, targetCamX), Add(Scale(playerRailUp, targetY + 26.0f), Scale(playerRailDir, -65.0f))));
+
+                        camPos = {
+                            std::lerp(startPos.x, targetPos.x, easedT),
+                            std::lerp(startPos.y, targetPos.y, easedT),
+                            std::lerp(startPos.z, targetPos.z, easedT)
+                        };
+
+                        // 角度計算：ボスのLookAtから通常カメラの首振り角度へ補間
+                        Vector3 dir = Subtract(bossDropPos, camPos);
+                        Vector3 dirNorm = Normalize(dir);
+                        float lookRotY = -std::atan2(dirNorm.x, dirNorm.z);
+                        float lookRotX = std::atan2(-dirNorm.y, std::sqrt(dirNorm.x * dirNorm.x + dirNorm.z * dirNorm.z));
+
+                        // レール進行方向のベース角度
+                        float baseCamRotY = -std::atan2(playerRailDir.x, playerRailDir.z);
+                        float baseCamRotX = std::atan2(-playerRailDir.y, std::sqrt(playerRailDir.x * playerRailDir.x + playerRailDir.z * playerRailDir.z));
+
+                        float targetCamRotateY = baseCamRotY + (fighterModel_ ? fighterModel_->transform.translate.x * 0.003f : 0.0f);
+                        float targetCamRotateX = baseCamRotX + (fighterModel_ ? -fighterModel_->transform.translate.y * 0.003f : 0.0f);
+
+                        float blendT = easedT * easedT; // 最後に向けて通常カメラ角度にピタッと合わせる
+
+                        // ヨー角 (Y) の差分を [-PI, PI] にクランプして最短経路で補間
+                        float diffRotY = targetCamRotateY - lookRotY;
+                        while (diffRotY < -static_cast<float>(M_PI)) diffRotY += 2.0f * static_cast<float>(M_PI);
+                        while (diffRotY > static_cast<float>(M_PI)) diffRotY -= 2.0f * static_cast<float>(M_PI);
+                        camRot.y = lookRotY + diffRotY * blendT;
+
+                        // ピッチ角 (X) の差分を [-PI, PI] にクランプして最短経路で補間
+                        float diffRotX = targetCamRotateX - lookRotX;
+                        while (diffRotX < -static_cast<float>(M_PI)) diffRotX += 2.0f * static_cast<float>(M_PI);
+                        while (diffRotX > static_cast<float>(M_PI)) diffRotX -= 2.0f * static_cast<float>(M_PI);
+                        camRot.x = lookRotX + diffRotX * blendT;
+
+                        camRot.z = 0.0f;
                     }
 
-                    camera_->SetTarget(&bossDropPos); // ボスをロックオン
-                }
-                else {
-                    // --- フェーズ3: 旋回完了位置から通常アングルへのスムーズな復帰 + 咆哮微振動 (t: 4.0s ～ 5.0s) ---
-                    camera_->ClearTarget(); // ターゲットを解除して通常アングルの首振り角度（オイラー角）補間に戻す
-
-                    float t_phase3 = (t - 4.0f) / 1.0f;
-                    float easedT = t_phase3 * t_phase3 * (3.0f - 2.0f * t_phase3); // Smoothstep
-
-                    // 4.0s時点のボス位置（着地状態のでdropOffset=0）
-                    Vector3 bossDropPos35 = GetBossPosition(0.0f);
-                    
-                    float bossProgress = fighterWorldZ_ + bossZOffset_;
-                    Vector3 bRailDir = GetRailDirection(bossProgress);
-                    Vector3 bRailRight = CalculateRailRight(bRailDir);
-                    Vector3 bRailUp = CalculateRailUp(bRailDir, bRailRight);
-
-                    // 旋回完了時の位置（ボスの後方上空、らせんの終端高さ 45.0f に合わせる、レール追従）
-                    Vector3 startPos = Add(bossDropPos35, Add(Scale(bRailDir, -dist), Scale(bRailUp, 45.0f)));
-                    // 通常位置（戦闘機背後、レール追従）
-                    Vector3 targetPos = Add(playerRailPos, Add(Scale(playerRailRight, targetCamX), Add(Scale(playerRailUp, targetY + 26.0f), Scale(playerRailDir, -65.0f))));
-
-                    camPos = {
-                        std::lerp(startPos.x, targetPos.x, easedT),
-                        std::lerp(startPos.y, targetPos.y, easedT),
-                        std::lerp(startPos.z, targetPos.z, easedT)
-                    };
-
-                    // 咆哮時の激しいカメラ微振動（最初の0.5秒ほどが最大で徐々に収まる）
-                    float shakeIntensity = 2.5f * (1.0f - t_phase3);
-                    std::uniform_real_distribution<float> distShake(-1.0f, 1.0f);
-                    camPos.x += distShake(randomEngine_) * shakeIntensity;
-                    camPos.y += distShake(randomEngine_) * shakeIntensity;
-                    camPos.z += distShake(randomEngine_) * shakeIntensity;
-
-                    // 角度計算：ボスのLookAtから通常カメラの首振り角度へ補間
-                    Vector3 dir = Subtract(bossDropPos, camPos);
-                    Vector3 dirNorm = Normalize(dir);
-                    float lookRotY = -std::atan2(dirNorm.x, dirNorm.z); // 符号をマイナスに修正
-                    float lookRotX = std::atan2(-dirNorm.y, std::sqrt(dirNorm.x * dirNorm.x + dirNorm.z * dirNorm.z));
-
-                    // レール進行方向のベース角度
-                    float baseCamRotY = -std::atan2(playerRailDir.x, playerRailDir.z); // 符号をマイナスに修正
-                    float baseCamRotX = std::atan2(-playerRailDir.y, std::sqrt(playerRailDir.x * playerRailDir.x + playerRailDir.z * playerRailDir.z));
-
-                    float targetCamRotateY = baseCamRotY + (fighterModel_ ? fighterModel_->transform.translate.x * 0.003f : 0.0f);
-                    float targetCamRotateX = baseCamRotX + (fighterModel_ ? -fighterModel_->transform.translate.y * 0.003f : 0.0f);
-
-                    float blendT = easedT * easedT; // 最後に向けて急激に通常カメラ角度に戻す
-
-                    // ヨー角 (Y) の差分を [-PI, PI] にクランプして最短経路で補間
-                    float diffRotY = targetCamRotateY - lookRotY;
-                    while (diffRotY < -static_cast<float>(M_PI)) diffRotY += 2.0f * static_cast<float>(M_PI);
-                    while (diffRotY > static_cast<float>(M_PI)) diffRotY -= 2.0f * static_cast<float>(M_PI);
-                    camRot.y = lookRotY + diffRotY * blendT;
-
-                    // ピッチ角 (X) の差分を [-PI, PI] にクランプして最短経路で補間
-                    float diffRotX = targetCamRotateX - lookRotX;
-                    while (diffRotX < -static_cast<float>(M_PI)) diffRotX += 2.0f * static_cast<float>(M_PI);
-                    while (diffRotX > static_cast<float>(M_PI)) diffRotX -= 2.0f * static_cast<float>(M_PI);
-                    camRot.x = lookRotX + diffRotX * blendT;
-
-                    camRot.z = 0.0f;
-                }
-
-                // カメラに適用
-                camTrans.translate = camPos;
-                if (t >= 4.0f) {
-                    camTrans.rotate = camRot;
-                }
+                    // カメラに適用
+                    camTrans.translate = camPos;
+                    if (t >= 4.0f) {
+                        camTrans.rotate = camRot;
+                    }
+                } else if (t_total >= 7.5f) {
+                    // 7.5s以降（カメラ復帰完了後の咆哮フェーズ）はターゲットロックを確実に解除し、プレイヤー背後カメラに咆哮の微振動を加える
+                    camera_->ClearTarget();
+                    if (t_total >= 7.55f && t_total < 9.0f) {
+                        float roarProgress = std::clamp((t_total - 7.55f) / 1.45f, 0.0f, 1.0f);
+                        float easeRoar = std::sin(roarProgress * static_cast<float>(M_PI));
+                        camTrans.rotate.x += std::sin(t_total * 55.0f) * 0.0015f * easeRoar;
+                        camTrans.rotate.y += std::cos(t_total * 47.0f) * 0.0012f * easeRoar;
+                        camTrans.rotate.z += std::sin(t_total * 39.0f) * 0.0018f * easeRoar;
+                    }
                 }
             }
 
@@ -3474,10 +3312,7 @@ void GamePlayScene::Update() {
 
 
             // ── Blender同期: game_state.jsonの出力（3フレームに1回）──
-            if (input_->IsKeyTriggered(DIK_B) && !isTitleMode_) {
-                isBlenderSyncEnabled_ = !isBlenderSyncEnabled_;
-            }
-            if (isBlenderSyncEnabled_ && ++blenderSyncCounter_ % 5 == 0) {
+            if (++blenderSyncCounter_ % 3 == 0) {
                 std::ostringstream oss;
                 oss << "{\n";
                 // フェーズ情報
@@ -3721,8 +3556,9 @@ void GamePlayScene::Update() {
             aimReticlePos_.z = std::lerp(aimReticlePos_.z, targetReticlePos.z, aimLerpSpeed);
             Vector3 reticlePos = aimReticlePos_;
 
-            // ボス登場演出中・撃墜墜落中は射撃を禁止
-            if (input_->IsKeyTriggered(DIK_SPACE) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_ && !isPlayerDead_) {
+            // ボス登場演出中は射撃を禁止
+            bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
+            if (input_->IsKeyTriggered(DIK_SPACE) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_) {
                 // 翼の発射位置をレールのright/up方向で計算
                 Vector3 leftWing  = Add(fighterWorldPos, Add(Scale(playerRailRight, -2.5f), Scale(playerRailUp, 0.8f)));
                 Vector3 rightWing = Add(fighterWorldPos, Add(Scale(playerRailRight,  2.5f), Scale(playerRailUp, 0.8f)));
@@ -4369,14 +4205,14 @@ void GamePlayScene::Update() {
             }
         }
 
-        // 落下登場演出時のオフセット (最初の1.5秒間は画面外上空に待機、1.5秒〜3.3秒で落下)
+        // 落下登場演出時のオフセット (最初の2.5秒間は画面外上空に待機、2.5秒〜4.3秒で落下)
         float dropOffset = 0.0f;
         if (bossAppearanceTimer_ > 0.0f) {
-            float total_t = 7.5f - bossAppearanceTimer_;
-            if (total_t < 2.5f) {
+            float t = 9.0f - bossAppearanceTimer_;
+            if (t < 2.5f) {
                 dropOffset = 180.0f;
-            } else if (total_t < 4.3f) {
-                float appRate = (total_t - 2.5f) / 1.8f;
+            } else if (t < 4.3f) {
+                float appRate = (t - 2.5f) / 1.8f;
                 dropOffset = 120.0f * (1.0f - appRate) * (1.0f - appRate);
             }
         }
@@ -4436,11 +4272,11 @@ void GamePlayScene::Update() {
         // Y軸回転に加えて、Z軸のロール回転を合成
         Vector3 bossRotate = { 0.0f, bossBodyRotY_ * (float)M_PI / 180.0f, bodyRoll };
 
-        // ボス咆哮時の姿勢（4.0秒から5.0秒の咆哮フェーズで上を向いて吠えるポーズと微振動を適用）
+        // ボス登場カメラ完了後の咆哮姿勢（7.55秒から9.0秒の咆哮フェーズで上を向いて吠えるポーズと微振動を適用）
         if (bossAppearanceTimer_ > 0.0f) {
-            float total_t = 7.5f - bossAppearanceTimer_;
-            if (total_t >= 6.0f && total_t < 7.5f) {
-                float roarProgress = (total_t - 6.0f) / 1.5f;
+            float t = 9.0f - bossAppearanceTimer_;
+            if (t >= 7.55f && t < 9.0f) {
+                float roarProgress = std::clamp((t - 7.55f) / 1.45f, 0.0f, 1.0f);
                 float easeRoar = std::sin(roarProgress * static_cast<float>(M_PI)); // 0 -> 1 -> 0
 
                 // 咆哮で天を仰ぐのけぞり (X軸回転、最大 -0.5ラジアン)
@@ -4452,10 +4288,10 @@ void GamePlayScene::Update() {
 
                 // 咆哮の全身超激震 (高周波激震)
                 float shakeFreq = 65.0f;
-                bossRotate.y += std::sin(total_t * shakeFreq) * 0.08f;
-                bossRotate.z += std::cos(total_t * shakeFreq) * 0.08f;
-                bossPos.y += std::sin(total_t * shakeFreq) * 0.45f;
-                bossPos.z += std::cos(total_t * shakeFreq) * 0.30f;
+                bossRotate.y += std::sin(t * shakeFreq) * 0.08f;
+                bossRotate.z += std::cos(t * shakeFreq) * 0.08f;
+                bossPos.y += std::sin(t * shakeFreq) * 0.45f;
+                bossPos.z += std::cos(t * shakeFreq) * 0.30f;
             }
         }
 
@@ -4586,16 +4422,16 @@ void GamePlayScene::Update() {
                     }
                 }
 
-                // 咆哮演出中 (4.0s ～ 5.0s) の前脚威嚇モーション
+                // 登場カメラ完了後の咆哮演出中 (7.55s ～ 9.0s) の前脚威嚇モーション
                 if (bossAppearanceTimer_ > 0.0f) {
-                    float total_t = 7.5f - bossAppearanceTimer_;
-                    if (total_t >= 6.0f && total_t < 7.5f) {
-                        float roarProgress = (total_t - 6.0f) / 1.5f;
+                    float t_appearance = 9.0f - bossAppearanceTimer_;
+                    if (t_appearance >= 7.55f && t_appearance < 9.0f) {
+                        float roarProgress = std::clamp((t_appearance - 7.55f) / 1.45f, 0.0f, 1.0f);
                         float easeRoar = std::sin(roarProgress * static_cast<float>(M_PI));
 
                         if (i == 0 || i == 1) { // 左側の前脚
                             currentPitch = std::lerp(normalPitch, 1.5f, easeRoar);
-                            currentRotY += std::sin(total_t * 80.0f) * 0.15f * easeRoar; // ガタガタ動かす
+                            currentRotY += std::sin(t_appearance * 80.0f) * 0.15f * easeRoar; // ガタガタ動かす
                         } else {
                             // 後ろ脚：踏みしめる
                             currentPitch = std::lerp(normalPitch, -0.4f, easeRoar);
@@ -4677,17 +4513,17 @@ void GamePlayScene::Update() {
                     }
                 }
 
-                // 咆哮演出中 (4.0s ～ 5.0s) の前脚威嚇モーション
+                // 登場カメラ完了後の咆哮演出中 (7.55s ～ 9.0s) の前脚威嚇モーション
                 if (bossAppearanceTimer_ > 0.0f) {
-                    float total_t = 7.5f - bossAppearanceTimer_;
-                    if (total_t >= 6.0f && total_t < 7.5f) {
-                        float roarProgress = (total_t - 6.0f) / 1.5f;
+                    float t_appearance = 9.0f - bossAppearanceTimer_;
+                    if (t_appearance >= 7.55f && t_appearance < 9.0f) {
+                        float roarProgress = std::clamp((t_appearance - 7.55f) / 1.45f, 0.0f, 1.0f);
                         float easeRoar = std::sin(roarProgress * static_cast<float>(M_PI));
 
                         if (i == 4 || i == 5) { // 右側の前脚
                             // 前脚：天高く持ち上げる ＆ 小刻みに震わせる (右足なのでマイナス方向)
                             currentPitch = std::lerp(normalPitch, -1.5f, easeRoar);
-                            currentRotY += std::sin(total_t * 80.0f) * 0.15f * easeRoar;
+                            currentRotY += std::sin(t_appearance * 80.0f) * 0.15f * easeRoar;
                         } else {
                             // 後ろ脚：踏みしめる
                             currentPitch = std::lerp(normalPitch, 0.4f, easeRoar);
@@ -5138,7 +4974,7 @@ void GamePlayScene::Update() {
     // ボス戦中もビルの物理シミュレーション・衝突判定・行列計算を更新する。
     if (sceneMode_ == SceneMode::kFighter) {
         // ボス登場演出後半（t >= 2.5s）のみカメラを固定し、最初の2.5s（WARNING中）は通常プレイカメラでプレイヤーが前進・操作する画面にする
-        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
+        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (9.0f - bossAppearanceTimer_) >= 2.5f);
         float cameraZ = (isBossIntro || isTitleMode_) ? (fighterWorldZ_ - 65.0f) : camera_->GetTransform().translate.z;
 
         // ビルの画面外再配置（自動直進コースのときのみオブジェクトプールによる再配置を行う）
@@ -5159,6 +4995,7 @@ void GamePlayScene::Update() {
                     buildings_[i].destroyTimer = 0.0f;
 
                     buildings_[i].floors = buildings_[i].originalFloors;
+                    buildings_[i].isWorldMatrixCached = false;
                 }
             }
         }
@@ -5178,8 +5015,8 @@ void GamePlayScene::Update() {
                 bRailRight = CalculateRailRight(bRailDir);
             }
 
-            // ボス戦開始時のビル累積距離の一括初期化（1回のみ）
-            if (currentPhase_ == GamePhase::kBossFight && !isBossFightInitialized_) {
+            // ボス戦開始時のビル累積距離の一括初期化（自動直進コース waypoints_.empty() のときのみ実行し、都市コースでは既存の街並み座標を維持する）
+            if (waypoints_.empty() && currentPhase_ == GamePhase::kBossFight && !isBossFightInitialized_) {
                 isBossFightInitialized_ = true;
                 float L = 2000.0f; // ループの全体長
                 for (size_t i = 0; i < buildings_.size(); ++i) {
@@ -5220,12 +5057,13 @@ void GamePlayScene::Update() {
                         buildings_[i].floors = 6 + (i % 7);
                     }
                     buildings_[i].originalFloors = buildings_[i].floors;
+                    buildings_[i].isWorldMatrixCached = false;
                 }
             }
 
             for (size_t i = 0; i < buildings_.size(); ++i) {
-                // ── ボス戦中（および登場演出中）のビル位置ループ再配置 ──
-                if (currentPhase_ == GamePhase::kBossFight) {
+                // ── ボス戦中（自動直進コース時のみ）のビル位置ループ再配置 ──
+                if (waypoints_.empty() && currentPhase_ == GamePhase::kBossFight) {
                     float L = 2000.0f; // ループの全体長
                     // プレイヤーの後方に流れたビルを前方へワープ
                     if (buildings_[i].railProgress < fighterWorldZ_ - 200.0f) {
@@ -5250,6 +5088,7 @@ void GamePlayScene::Update() {
                             buildings_[i].floors = 6 + (i % 7);
                         }
                         buildings_[i].originalFloors = buildings_[i].floors;
+                        buildings_[i].isWorldMatrixCached = false;
                     }
                     
                     // 破壊されていないときのみ、現在設定されている railProgress の静止座標に固定する
@@ -5309,7 +5148,7 @@ void GamePlayScene::Update() {
                             buildings_[i].destroyTimer = 0.0f;
 
                             // 吹き飛び方向
-                            float signX = (buildings_[i].position.x >= 0.0f) ? 1.0f : -1.0f;
+                            float signX = (localX >= 0.0f) ? 1.0f : -1.0f;
 
                             if (i % 2 == 0) {
                                 // なぎ倒れタイプ (回転中心は底面。外側へ倒れるように回転符号を修正)
@@ -5339,10 +5178,25 @@ void GamePlayScene::Update() {
         // 各ビルのワールド行列とWVP行列を計算（距離カリング & 1棟1ドロー統合最適化）
         {
             int cbIndex = 0;
-            bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
+            bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (9.0f - bossAppearanceTimer_) >= 2.5f);
             Vector3 refCamPos = (isBossIntro || isTitleMode_) ? GetRailPosition((std::max)(0.0f, fighterWorldZ_ - 65.0f)) : camera_->GetTransform().translate;
             float camZ = refCamPos.z;
             float camX = refCamPos.x;
+
+            // ボス登場演出中のカメラ位置・ボス位置を事前計算（公転旋回中にボスを遮るビルを半透明化する）
+            Vector3 introCamPos = camera_->GetTransform().translate;
+            Vector3 introBossPos = { 0.0f, 0.0f, 0.0f };
+            float t_app = 9.0f - bossAppearanceTimer_;
+            if (isBossIntro) {
+                float dropOffset = 0.0f;
+                if (t_app < 2.5f) {
+                    dropOffset = 180.0f;
+                } else if (t_app < 4.3f) {
+                    float appRate = (t_app - 2.5f) / 1.8f;
+                    dropOffset = 120.0f * (1.0f - appRate) * (1.0f - appRate);
+                }
+                introBossPos = GetBossPosition(0.0f, dropOffset);
+            }
 
             for (size_t i = 0; i < buildings_.size(); ++i) {
                 buildings_[i].cbIndexStart = -1;
@@ -5364,6 +5218,76 @@ void GamePlayScene::Update() {
                     continue;
                 }
 
+                // ── 破壊時およびボス登場カメラ演出中のビル透過率（alpha）を算出（詳細描画・統合描画の両方に適用） ──
+                float alpha = 1.0f;
+                if (buildings_[i].isDestroyed) {
+                    // 1.0秒かけてアルファを 1.0 -> 0.0 に減少させる
+                    alpha = 1.0f - std::clamp(buildings_[i].destroyTimer / 1.0f, 0.0f, 1.0f);
+                    alpha = alpha * alpha; // イージング
+                } else if (isBossIntro) {
+                    // カメラからボスへの視線コーン（手前側のみ）に現在重なってボスを隠しているビルだけをピンポイントでその瞬間だけ半透明にする
+                    float bx = buildings_[i].position.x;
+                    float bz = buildings_[i].position.z;
+                    float cx = introCamPos.x;
+                    float cy = introCamPos.y;
+                    float cz = introCamPos.z;
+                    float tx = introBossPos.x;
+                    float ty = introBossPos.y;
+                    float tz = introBossPos.z;
+
+                    float abx = tx - cx;
+                    float abz = tz - cz;
+                    float apx = bx - cx;
+                    float apz = bz - cz;
+                    float abLenSq2D = abx * abx + abz * abz;
+
+                    if (abLenSq2D > 0.01f) {
+                        // u: カメラ位置(0.0) ～ ボス位置(1.0) の前後投影位置（1.0より奥の背景ビルや0.0より後ろのビルは一切透過させない）
+                        float u = (apx * abx + apz * abz) / abLenSq2D;
+                        if (u > -0.06f && u < 1.02f) {
+                            float u_seg = std::clamp(u, 0.0f, 1.0f);
+                            float nearX = cx + abx * u_seg;
+                            float nearZ = cz + abz * u_seg;
+                            float segDx = bx - nearX;
+                            float segDz = bz - nearZ;
+                            float perpDist = std::sqrt(segDx * segDx + segDz * segDz);
+
+                            // 視線コーンの横幅（カメラ直近では22m、ボス本体＋8本脚付近では42m）
+                            float coneRadius = std::lerp(22.0f, 42.0f, u_seg);
+                            if (perpDist < coneRadius) {
+                                // 高さの重なり判定（ビルの屋上がカメラ〜ボス間の視線ラインより下なら、視界を遮らないため透過しない）
+                                float rayY = std::lerp(cy, ty, u_seg);
+                                float vertMargin = std::lerp(8.0f, 22.0f, u_seg);
+                                float bldgTopY = buildings_[i].position.y + (float)buildings_[i].floors * kFloorHeight;
+
+                                if (bldgTopY >= rayY - vertMargin) {
+                                    // 前後方向フェード（カメラ手前端・ボス直前で滑らかにイン・アウト）
+                                    float alongWeight = 1.0f;
+                                    if (u < 0.04f) {
+                                        alongWeight = std::clamp((u - (-0.06f)) / 0.10f, 0.0f, 1.0f);
+                                    } else if (u > 0.90f) {
+                                        alongWeight = std::clamp((1.02f - u) / 0.12f, 0.0f, 1.0f);
+                                    }
+
+                                    // 横方向フェード（視線の中央に入った瞬間だけ透明になり、外れたらすぐ不透明へ戻る）
+                                    float coreRadius = coneRadius * 0.58f;
+                                    float perpWeight = 1.0f;
+                                    if (perpDist > coreRadius) {
+                                        float r = std::clamp((perpDist - coreRadius) / (coneRadius - coreRadius), 0.0f, 1.0f);
+                                        perpWeight = 1.0f - r * r * (3.0f - 2.0f * r);
+                                    }
+
+                                    // 高さ方向フェード
+                                    float vertWeight = std::clamp((bldgTopY - (rayY - vertMargin)) / 10.0f, 0.0f, 1.0f);
+
+                                    float occludeWeight = alongWeight * perpWeight * vertWeight;
+                                    alpha = std::lerp(1.0f, 0.12f, occludeWeight);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // プレイヤーが通るルート近傍および直進延長上のビル(isNearCourseColumn)は視界限界(kBuildingCullFarDist)まで常に詳細描画（荒くしない）
                 bool isDetailView = buildings_[i].isNearCourseColumn ||
                                     buildings_[i].isDestroyed ||
@@ -5373,75 +5297,6 @@ void GamePlayScene::Update() {
                     // 各階個別のマルチドロー（詳細描画）
                     buildings_[i].cbIndexStart = cbIndex;
                     int count = 0;
-
-                    // 破壊時のアルファ減衰を計算して「徐々に透明になる」演出を表現
-                    float alpha = 1.0f;
-                    if (buildings_[i].isDestroyed) {
-                        // 1.0秒かけてアルファを 1.0 -> 0.0 に減少させる
-                        alpha = 1.0f - std::clamp(buildings_[i].destroyTimer / 1.0f, 0.0f, 1.0f);
-                        alpha = alpha * alpha; // イージング
-                    } else if (isBossIntro) {
-                        // カメラとボスの視界を遮るビルを完全に透明にする（カメラカリング）
-                        Vector3 camPos = camera_->GetTransform().translate;
-                        
-                        float t_app = 6.5f - bossAppearanceTimer_;
-                        float dropOffset = 0.0f;
-                        if (t_app < 1.5f) {
-                            dropOffset = 180.0f; // 最初の1.5秒（WARNING予告）は画面外上空に待機！
-                        } else if (t_app < 3.3f) {
-                            float appRate = (t_app - 1.5f) / 1.8f;
-                            dropOffset = 120.0f * (1.0f - appRate) * (1.0f - appRate);
-                        }
-                        Vector3 bossDropPos = GetBossPosition(0.0f, dropOffset);
-                        
-                        // カメラ位置Aからボス位置Bへの線分
-                        Vector3 AB = Subtract(bossDropPos, camPos);
-                        Vector3 AP = Subtract(buildings_[i].position, camPos);
-                        
-                        float abLenSq = AB.x * AB.x + AB.y * AB.y + AB.z * AB.z;
-                        bool occluded = false;
-                        if (abLenSq > 0.001f) {
-                            float t_proj = (AP.x * AB.x + AP.y * AB.y + AP.z * AB.z) / abLenSq;
-                            
-                            // 最短距離の計算
-                            float distSq = 0.0f;
-                            if (t_proj < 0.0f) {
-                                distSq = AP.x * AP.x + AP.y * AP.y + AP.z * AP.z;
-                            } else if (t_proj > 1.0f) {
-                                Vector3 BP = Subtract(buildings_[i].position, bossDropPos);
-                                distSq = BP.x * BP.x + BP.y * BP.y + BP.z * BP.z;
-                            } else {
-                                float apLenSq = AP.x * AP.x + AP.y * AP.y + AP.z * AP.z;
-                                distSq = apLenSq - (t_proj * t_proj * abLenSq);
-                            }
-                            
-                            // 線分からの最短距離が35.0m以内のビルを完全に透明（非表示）にする
-                            if (t_proj >= 0.0f && t_proj <= 1.0f && distSq < 35.0f * 35.0f) {
-                                occluded = true;
-                            }
-                        }
-                        
-                        if (occluded) {
-                            alpha = 0.0f;
-                        } else {
-                            // それ以外の周辺のビルは、以前と同様に少し透けさせて視覚的情報を残す
-                            float dz_p = buildings_[i].position.z - fighterWorldZ_;
-                            float dx_p = buildings_[i].position.x - playerPos_.x;
-                            float distSq_p = dx_p * dx_p + dz_p * dz_p;
-                            
-                            float bossWorldZ = fighterWorldZ_ + bossZOffset_;
-                            float dz_b = buildings_[i].position.z - bossWorldZ;
-                            float dx_b = buildings_[i].position.x - 0.0f;
-                            float distSq_b = dx_b * dx_b + dz_b * dz_b;
-                            
-                            if (distSq_p < 300.0f * 300.0f || distSq_b < 300.0f * 300.0f) {
-                                alpha = 0.25f;
-                            }
-                        }
-                    }
-
-                    // 完全に透明なビルは描画自体をスキップ（ドローコール削減）
-                    if (alpha <= 0.01f) { buildings_[i].cbIndexStart = -1; continue; }
 
                     // ワールド行列の初期化キャッシュ（破壊されていない静的ビル用）
                     if (!buildings_[i].isWorldMatrixCached || (int)buildings_[i].cachedDetailWorldMatrices.size() != buildings_[i].floors) {
@@ -5504,7 +5359,7 @@ void GamePlayScene::Update() {
                     Matrix4x4 worldMatrix = buildings_[i].cachedIntegratedWorldMatrix;
                     buildingTransformData_[cbIndex]->World = worldMatrix;
                     buildingTransformData_[cbIndex]->WVP = Multiply(worldMatrix, viewProjectionMatrix);
-                    buildingTransformData_[cbIndex]->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+                    buildingTransformData_[cbIndex]->color = { 1.0f, 1.0f, 1.0f, alpha };
                     cbIndex++;
                 }
             }
@@ -5641,7 +5496,7 @@ void GamePlayScene::Update() {
         camera_->GetTransform().translate.z,
         fighterWorldPos,
         isBoosting_ || isPhaseIntroBoost,
-        (sceneMode_ == SceneMode::kFighter && !isBossDefeatedSequence_ && !hidePlayerForTransition && !isPlayerDead_),
+        (sceneMode_ == SceneMode::kFighter && !isBossDefeatedSequence_ && !hidePlayerForTransition),
         currentEffect_,
         emitterPos_,
         leftJetPos,
@@ -5797,64 +5652,6 @@ void GamePlayScene::Update() {
         }
     }
 
-    // ── 墜落黒煙パーティクル（3Dビルボード）の更新・行列計算 ──
-    if (smokeInstancingData_) {
-        Matrix4x4 viewProj = camera_->GetViewProjectionMatrix();
-        Matrix4x4 billboard = camera_->GetBillboardMatrix();
-
-        for (uint32_t i = 0; i < kMaxSmokeParticles; ++i) {
-            if (smokeParticles_[i].currentTime < smokeParticles_[i].lifeTime) {
-                smokeParticles_[i].currentTime += kDeltaTime;
-                if (smokeParticles_[i].currentTime >= smokeParticles_[i].lifeTime) {
-                    smokeInstancingData_[i].World = MakeIdentity4x4();
-                    smokeInstancingData_[i].WVP = MakeIdentity4x4();
-                    smokeInstancingData_[i].color = { 0.0f, 0.0f, 0.0f, 0.0f };
-                    smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
-                    continue;
-                }
-
-                float t = smokeParticles_[i].currentTime / smokeParticles_[i].lifeTime;
-                // 位置更新 (初速 + 上昇気流 + 空気抵抗による水平減速)
-                smokeParticles_[i].position = Add(smokeParticles_[i].position, Scale(smokeParticles_[i].velocity, kDeltaTime));
-                smokeParticles_[i].velocity.x *= (1.0f - 1.2f * kDeltaTime);
-                smokeParticles_[i].velocity.z *= (1.0f - 1.2f * kDeltaTime);
-                smokeParticles_[i].velocity.y += 3.5f * kDeltaTime;
-
-                // サイズ成長 (黒煙はもくもくと広がる)
-                smokeParticles_[i].scale.x += smokeParticles_[i].growthRate * kDeltaTime;
-                smokeParticles_[i].scale.y += smokeParticles_[i].growthRate * kDeltaTime;
-
-                // アルファフェード (前半濃く、後半自然に消える)
-                float alpha = smokeParticles_[i].initialAlpha;
-                if (t < 0.15f) {
-                    alpha = (t / 0.15f) * smokeParticles_[i].initialAlpha;
-                } else {
-                    alpha = (1.0f - (t - 0.15f) / 0.85f) * smokeParticles_[i].initialAlpha;
-                }
-
-                Matrix4x4 world = Multiply(MakeScaleMatrix(smokeParticles_[i].scale), billboard);
-                world.m[3][0] = smokeParticles_[i].position.x;
-                world.m[3][1] = smokeParticles_[i].position.y;
-                world.m[3][2] = smokeParticles_[i].position.z;
-
-                smokeInstancingData_[i].World = world;
-                smokeInstancingData_[i].WVP = Multiply(world, viewProj);
-                smokeInstancingData_[i].color = {
-                    smokeParticles_[i].color.x,
-                    smokeParticles_[i].color.y,
-                    smokeParticles_[i].color.z,
-                    alpha
-                };
-                smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
-            } else {
-                smokeInstancingData_[i].World = MakeIdentity4x4();
-                smokeInstancingData_[i].WVP = MakeIdentity4x4();
-                smokeInstancingData_[i].color = { 0.0f, 0.0f, 0.0f, 0.0f };
-                smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
-            }
-        }
-    }
-
     if (gpuParticleManager_) {
         gpuParticleManager_->Update(camera_->GetViewProjectionMatrix(), camera_->GetBillboardMatrix(), kDeltaTime);
     }
@@ -5980,9 +5777,9 @@ void GamePlayScene::Draw() {
             commandList->SetPipelineState(graphicsPipeline_->GetObject3dPipelineState());
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetObject3dRootSignature());
 
-            // 自機(Fighter)描画（画面外から突っ込んできたプレイヤー機が定位置に配置されるまでは元から立っている方を非表示にする、撃墜地面激突時も非表示）
+            // 自機(Fighter)描画（画面外から突っ込んできたプレイヤー機が定位置に配置されるまでは元から立っている方を非表示にする）
             bool hidePlayerForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
-            if (fighterModel_ && !hidePlayerForTransition && !isFighterDestroyed_) {
+            if (fighterModel_ && !hidePlayerForTransition) {
                 if (fighterTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, fighterTransformResource_->GetGPUVirtualAddress());
                 if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
                 if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
@@ -5998,7 +5795,7 @@ void GamePlayScene::Draw() {
                 D3D12_GPU_DESCRIPTOR_HANDLE juziroSrv = TextureManager::GetInstance()->GetSrvHandleGPU("juziro.jpg");
                 D3D12_GPU_DESCRIPTOR_HANDLE testSrv = TextureManager::GetInstance()->GetSrvHandleGPU("test.dds");
 
-                bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (7.5f - bossAppearanceTimer_) >= 2.5f);
+                bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (9.0f - bossAppearanceTimer_) >= 2.5f);
                 Vector3 refCamPos = (isBossIntro || isTitleMode_) ? GetRailPosition((std::max)(0.0f, fighterWorldZ_ - 65.0f)) : camera_->GetTransform().translate;
                 float camX = refCamPos.x;
                 float camZ = refCamPos.z;
@@ -6155,7 +5952,7 @@ void GamePlayScene::Draw() {
 
                 // ボス登場演出中、またはボスがカメラより一定以上後ろ（手前）に通り過ぎていない場合のみ描画
                 bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
-                float t_app = 7.5f - bossAppearanceTimer_;
+                float t_app = 9.0f - bossAppearanceTimer_;
                 bool canDrawBoss = true;
                 if (isBossIntro && t_app < 2.5f) {
                     canDrawBoss = false; // WARNING予告中（最初の2.5秒間）はボスを完全に非描画にし、重なりを完全に防止！
@@ -6202,10 +5999,10 @@ void GamePlayScene::Draw() {
             }
         }
         
-        // エイミング(レティクル)の描画 (ボス登場演出中、画面外からの突入配置中、および撃墜墜落中は非表示)
-        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f);
+        // エイミング(レティクル)の描画 (ボス登場演出中および画面外からの突入配置中は非表示)
+        bool isBossIntro = (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ > 0.0f && (9.0f - bossAppearanceTimer_) >= 2.5f);
         bool hideReticleForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
-        if (!isBossIntro && !isTitleMode_ && !hideReticleForTransition && !isPlayerDead_ && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
+        if (!isBossIntro && !isTitleMode_ && !hideReticleForTransition && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
             commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             if (graphicsPipeline_->GetPipelineState(kBlendModeNormal)) {
@@ -6224,18 +6021,6 @@ void GamePlayScene::Draw() {
                 commandList->SetPipelineState(graphicsPipeline_->GetPipelineState(kBlendModeNormal));
                 if (particleModel_) {
                     particleModel_->Draw(commandList, kMaxWebBullets, spiderWebSrvHandleGPU_, webBulletInstancingSrvHandleGPU_);
-                }
-            }
-        }
-
-        // 墜落黒煙パーティクル（3Dビルボード）の描画 (Normalブレンドで背景を遮るリアルな黒煙を表現)
-        if (graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
-            commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
-            commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            if (graphicsPipeline_->GetPipelineState(kBlendModeNormal)) {
-                commandList->SetPipelineState(graphicsPipeline_->GetPipelineState(kBlendModeNormal));
-                if (particleModel_) {
-                    particleModel_->Draw(commandList, kMaxSmokeParticles, TextureManager::GetInstance()->GetSrvHandleGPU("circle2.png"), smokeInstancingSrvHandleGPU_);
                 }
             }
         }
@@ -6507,10 +6292,9 @@ void GamePlayScene::Draw() {
                             scaleX = 1.0f + impactBounce + slowZoom;
                             scaleY = 1.0f + impactBounce + slowZoom;
 
-                            // 着弾直後の高周波シェイク
-                            float shakeAmp = (elapsed < 0.22f) ? (1.0f - elapsed / 0.22f) * 10.0f : 1.2f;
-                            float shakeX = std::sin(t * 150.0f) * shakeAmp;
-                            float shakeY = std::cos(t * 175.0f) * shakeAmp * 0.6f;
+                            // 揺れなしで中央にピタッと固定
+                            float shakeX = 0.0f;
+                            float shakeY = 0.0f;
 
                             // 鼓動するソニックオーラ残像（周期的に背面から拡大拡散）
                             for (int g = 0; g < 2; ++g) {
@@ -6599,16 +6383,16 @@ void GamePlayScene::Draw() {
                 }
             }
 
-            // ── ボス登場前のWARNING予告演出描画 (最初の2.5秒間。PHASE演出スタイルのサイバーバイザー＆スラッシュ演出) ──
+            // ── ボス登場前の純粋なWARNING予告演出描画 (最初の2.5秒間のみ表示。ボス演出とは完全に分離) ──
             if (bossAppearanceTimer_ > 0.0f && !isTitleMode_) {
-                float t = 7.5f - bossAppearanceTimer_; // 0.0s ～ 7.5s
+                float t = 9.0f - bossAppearanceTimer_; // 0.0s ～ 9.0s
 
                 // 最初の2.5秒間（WARNING予告パート）のみ描画！
                 if (t < 2.5f) {
-                    float halfClientW = (float)WinApp::kClientWidth / 2.0f;
-                    float halfClientH = (float)WinApp::kClientHeight / 2.0f;
                     float clientW = (float)WinApp::kClientWidth;
                     float clientH = (float)WinApp::kClientHeight;
+                    float halfClientW = clientW / 2.0f;
+                    float halfClientH = clientH / 2.0f;
                     Matrix4x4 projectionSprite = MakeOrthographicMatrix(-halfClientW, halfClientH, halfClientW, -halfClientH, 0.0f, 100.0f);
                     Matrix4x4 viewProjSprite = Multiply(MakeIdentity4x4(), projectionSprite);
 
@@ -6616,247 +6400,228 @@ void GamePlayScene::Draw() {
                         commandList->SetGraphicsRootSignature(graphicsPipeline_->GetSpriteRootSignature());
                         commandList->SetPipelineState(graphicsPipeline_->GetSpritePipelineState());
 
-                        // 中心基準＆任意のZ回転でスプライトを描画するヘルパーラムダ
-                        auto drawCenteredSprite = [&](Sprite* spr, float cx, float cy, float w, float h, float rotZ, const Vector4& col) {
-                            if (!spr || w <= 0.1f || h <= 0.1f || col.w <= 0.001f) return;
-                            float sx = w;
-                            float sy = -h; // 正射影(+Yが上)での上下反転補正
+                        // 中心座標(centerX, centerY)・幅・高さ・回転角(rotZ)から2Dスプライトを正確に中央基準で描画するヘルパー
+                        auto drawWarnCentered = [&](Sprite* sp, float cx, float cy, float w, float h, float rotZ, const Vector4& col) {
+                            if (!sp || w <= 0.01f || h <= 0.01f || col.w <= 0.001f) return;
                             float cosR = std::cos(rotZ);
                             float sinR = std::sin(rotZ);
-                            spr->transform.scale = { sx, sy, 1.0f };
-                            spr->transform.rotate = { 0.0f, 0.0f, rotZ };
-                            spr->transform.translate = {
-                                cx - (0.5f * sx * cosR + 0.5f * sy * sinR),
-                                cy - (-0.5f * sx * sinR + 0.5f * sy * cosR),
-                                0.0f
-                            };
-                            spr->SetColor(col);
-                            spr->Draw(commandList, viewProjSprite);
+                            float tx = cx - (w * 0.5f) * cosR - (h * 0.5f) * sinR;
+                            float ty = cy - (w * 0.5f) * sinR + (h * 0.5f) * cosR;
+                            sp->transform.translate = { tx, ty, 0.0f };
+                            sp->transform.scale = { w, -h, 1.0f };
+                            sp->transform.rotate = { 0.0f, 0.0f, rotZ };
+                            sp->SetColor(col);
+                            sp->Draw(commandList, viewProjSprite);
                         };
 
-                        // WARNING専用テーマカラー: 深紅（クリムゾン）＆ 警告アンバーオレンジ
-                        Vector3 themePrimary = { 1.0f, 0.08f, 0.12f };
-                        Vector3 themeAccent  = { 1.0f, 0.55f, 0.12f };
+                        // 2.0秒～2.5秒の0.5秒間で中央から左右へ斬られてスライド退場
+                        float exitU = (t >= 2.0f) ? std::clamp((t - 2.0f) / 0.5f, 0.0f, 1.0f) : 0.0f;
+                        float exitEase = exitU * exitU * (2.2f - 1.2f * exitU);
+                        float exitSplitX = exitEase * 900.0f;
+                        float fadeAlpha = (t >= 2.0f) ? (std::max)(0.0f, 1.0f - std::pow(exitU, 1.5f)) : 1.0f;
 
-                        // 帯の開閉率 (0.0s〜0.30sで展開、1.75s以降左右スライド＆フェードで消去)
-                        float barOpen = 1.0f;
-                        float exitFade = 1.0f;
-                        float exitSplitX = 0.0f;
-                        if (t < 0.30f) {
-                            float u = t / 0.30f;
-                            barOpen = 1.0f - (1.0f - u) * (1.0f - u);
-                        } else if (t >= 1.75f) {
-                            float u = std::clamp((t - 1.75f) / (2.45f - 1.75f), 0.0f, 1.0f);
-                            exitFade = std::clamp(1.0f - std::pow(u, 1.45f), 0.0f, 1.0f);
-                            exitSplitX = 580.0f * (0.40f * u + 0.60f * u * u);
-                        }
+                        // 上下警戒枠および中央バイザー帯のスライドインイージング (最初の0.28秒間)
+                        float slideIn = (t < 0.28f) ? (t / 0.28f) : 1.0f;
+                        slideIn = std::sin(slideIn * static_cast<float>(M_PI) * 0.5f); // 0 -> 1
 
-                        // ① 全画面の薄い赤色パルスオーバーレイ（警戒感アップ）
+                        // 0.5秒周期のサイレンビート波形 (0.0s, 0.5s, 1.0s, 1.5s で鋭く跳ねる)
+                        float beatPhase = std::fmod(t, 0.50f) / 0.50f;
+                        float beatImpact = (t < 2.0f) ? std::pow(1.0f - beatPhase, 3.0f) : 0.0f;
+
+                        // ① 画面全体の赤い緊急パルス背景（ビートに合わせて鋭く明滅）
                         if (warningRedOverlaySprite_) {
-                            float redPulse = 0.28f + 0.16f * std::sin(warningScrollOffset_ * 14.0f);
-                            drawCenteredSprite(warningRedOverlaySprite_.get(), 0.0f, 0.0f, clientW, clientH, 0.0f, { 1.0f, 0.02f, 0.02f, redPulse * exitFade });
+                            float redPulse = (0.20f + 0.22f * beatImpact + 0.08f * std::sin(warningScrollOffset_ * 18.0f)) * fadeAlpha;
+                            warningRedOverlaySprite_->transform.translate = { -halfClientW, halfClientH, 0.0f };
+                            warningRedOverlaySprite_->transform.scale = { clientW, -clientH, 1.0f };
+                            warningRedOverlaySprite_->transform.rotate = { 0.0f, 0.0f, 0.0f };
+                            warningRedOverlaySprite_->SetColor({ 1.0f, 0.03f, 0.03f, redPulse });
+                            warningRedOverlaySprite_->Draw(commandList, viewProjSprite);
                         }
 
-                        // ② 上下シネマティック・レターボックス帯 ＆ 上下警戒テープ
-                        float letterboxH = 75.0f * barOpen * exitFade;
-                        if (letterboxH > 0.5f) {
-                            // レターボックス黒帯
-                            drawCenteredSprite(phaseIntroBandSprites_[3].get(), 0.0f,  halfClientH - letterboxH * 0.5f, clientW + 40.0f, letterboxH, 0.0f, { 0.02f, 0.01f, 0.03f, 0.92f * barOpen * exitFade });
-                            drawCenteredSprite(phaseIntroBandSprites_[4].get(), 0.0f, -halfClientH + letterboxH * 0.5f, clientW + 40.0f, letterboxH, 0.0f, { 0.02f, 0.01f, 0.03f, 0.92f * barOpen * exitFade });
-                            // ネオンレッドエッジライン
-                            drawCenteredSprite(phaseIntroStreakSprites_[6].get(), 0.0f,  halfClientH - letterboxH, clientW + 40.0f, 4.0f, 0.0f, { themePrimary.x, themePrimary.y, themePrimary.z, 0.95f * barOpen * exitFade });
-                            drawCenteredSprite(phaseIntroStreakSprites_[7].get(), 0.0f, -halfClientH + letterboxH, clientW + 40.0f, 4.0f, 0.0f, { themePrimary.x, themePrimary.y, themePrimary.z, 0.95f * barOpen * exitFade });
+                        // ② 上下の黄色＆黒ストライプバー（4枚の独立Spriteタイルで画面端から端まで途切れなく高速スクロール）
+                        {
+                            float tapeHeight = 65.0f * slideIn;
+                            float tapeWidth = 640.0f;
+                            float scrollSpeed = 520.0f; // 高速連続スクロール
 
-                            // 上下警戒テープ（黄色と黒のストライプテープ）
-                            if (warningTapeTopSprite_ && warningTapeBottomSprite_) {
-                                float tapeH = 50.0f * barOpen * exitFade;
-                                float tapeW = 640.0f;
-                                float scrollSpeed = 500.0f;
-                                float topOffset = std::fmod(warningScrollOffset_ * scrollSpeed, tapeW);
-                                float bottomOffset = -std::fmod(warningScrollOffset_ * scrollSpeed, tapeW);
+                            float topOffset = std::fmod(warningScrollOffset_ * scrollSpeed, tapeWidth);
+                            float bottomOffset = -std::fmod(warningScrollOffset_ * scrollSpeed, tapeWidth);
 
-                                for (float x = -halfClientW - tapeW + topOffset; x < halfClientW + tapeW; x += tapeW) {
-                                    drawCenteredSprite(warningTapeTopSprite_.get(), x + tapeW * 0.5f, halfClientH - letterboxH * 0.5f, tapeW, tapeH, 0.0f, { 1.0f, 1.0f, 1.0f, 1.0f * barOpen * exitFade });
+                            // 上部バー (右へスルスル移動) & 下部バー (左へスルスル移動)
+                            for (int k = 0; k < 4; ++k) {
+                                float topX = -halfClientW - tapeWidth + topOffset + k * tapeWidth;
+                                if (warningTapeTopSprites_[k]) {
+                                    warningTapeTopSprites_[k]->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f * fadeAlpha });
+                                    warningTapeTopSprites_[k]->transform.translate = { topX, halfClientH, 0.0f };
+                                    warningTapeTopSprites_[k]->transform.scale = { tapeWidth, -tapeHeight, 1.0f };
+                                    warningTapeTopSprites_[k]->Draw(commandList, viewProjSprite);
                                 }
-                                for (float x = -halfClientW - tapeW + bottomOffset; x < halfClientW + tapeW; x += tapeW) {
-                                    drawCenteredSprite(warningTapeBottomSprite_.get(), x + tapeW * 0.5f, -halfClientH + letterboxH * 0.5f, tapeW, tapeH, 0.0f, { 1.0f, 1.0f, 1.0f, 1.0f * barOpen * exitFade });
+
+                                float botX = -halfClientW - tapeWidth + bottomOffset + k * tapeWidth;
+                                if (warningTapeBottomSprites_[k]) {
+                                    warningTapeBottomSprites_[k]->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f * fadeAlpha });
+                                    warningTapeBottomSprites_[k]->transform.translate = { botX, -halfClientH + tapeHeight, 0.0f };
+                                    warningTapeBottomSprites_[k]->transform.scale = { tapeWidth, -tapeHeight, 1.0f };
+                                    warningTapeBottomSprites_[k]->Draw(commandList, viewProjSprite);
                                 }
                             }
+
+                            // 上下ストライプの内側エッジを彩る赤＆ゴールドの発光レーザーライン (bandSprites 3, 4)
+                            float edgeGlow = (0.78f + 0.22f * beatImpact) * fadeAlpha;
+                            drawWarnCentered(phaseIntroBandSprites_[3].get(), 0.0f,  halfClientH - tapeHeight - 3.0f, clientW, 4.5f, 0.0f, { 1.0f, 0.22f, 0.10f, edgeGlow });
+                            drawWarnCentered(phaseIntroBandSprites_[4].get(), 0.0f, -halfClientH + tapeHeight + 3.0f, clientW, 4.5f, 0.0f, { 1.0f, 0.22f, 0.10f, edgeGlow });
                         }
 
-                        // ③ 中央タクティカル・サイバーバイザー帯（-1.8度傾斜）
-                        float visorTilt = -0.032f; // 約 -1.8度
-                        float visorH = 175.0f * barOpen;
-                        if (t >= 0.42f && t < 0.58f) {
-                            float impactBump = 1.0f - (t - 0.42f) / 0.16f;
-                            visorH += 40.0f * impactBump * impactBump;
-                        }
-                        drawCenteredSprite(phaseIntroBandSprites_[0].get(), 0.0f, 0.0f, clientW + 120.0f, (std::max)(2.0f, visorH), visorTilt, { 0.08f, 0.01f, 0.02f, 0.78f * barOpen * exitFade });
+                        // ③ 中央の緊急タクティカルバイザー帯・高速ストリーク・左右ハザードエンブレム
+                        float bandH = (168.0f + 16.0f * beatImpact) * slideIn;
+                        if (bandH > 1.0f && fadeAlpha > 0.01f) {
+                            // 背面のダーククリムゾン帯 (bandSprites 0)
+                            drawWarnCentered(phaseIntroBandSprites_[0].get(), 0.0f, 0.0f, clientW + 160.0f, bandH, 0.0f, { 0.08f, 0.01f, 0.01f, 0.78f * fadeAlpha });
 
-                        // バイザー上下のレーザーレール（スライドイン＆スプリット）
-                        float railSlide = (t < 0.35f) ? (1.0f - std::pow(1.0f - t / 0.35f, 3.0f)) : 1.0f;
-                        float railOffsetX = (1.0f - railSlide) * 900.0f + exitSplitX;
-                        float halfVisorH = visorH * 0.5f;
-                        drawCenteredSprite(phaseIntroBandSprites_[1].get(), -railOffsetX,  halfVisorH, clientW + 120.0f, 5.0f, visorTilt, { themeAccent.x, themeAccent.y, themeAccent.z, 0.95f * barOpen * exitFade });
-                        drawCenteredSprite(phaseIntroBandSprites_[2].get(),  railOffsetX, -halfVisorH, clientW + 120.0f, 5.0f, visorTilt, { themePrimary.x, themePrimary.y, themePrimary.z, 0.95f * barOpen * exitFade });
+                            // 帯の上下を走るネオンレーザー枠（クリムゾンレッド＆アンバーゴールド）(bandSprites 1, 2)
+                            float railAlpha = (0.85f + 0.15f * beatImpact) * fadeAlpha;
+                            drawWarnCentered(phaseIntroBandSprites_[1].get(), -exitSplitX,  bandH * 0.5f, clientW + 160.0f, 5.5f, 0.0f, { 1.0f, 0.18f, 0.10f, railAlpha });
+                            drawWarnCentered(phaseIntroBandSprites_[2].get(),  exitSplitX, -bandH * 0.5f, clientW + 160.0f, 5.5f, 0.0f, { 1.0f, 0.82f, 0.18f, railAlpha });
 
-                        // ④ バイザー内を走る警告スピードストリーク ＆ 左右の回転サイバーダイヤモンド
-                        const float streakOffsetsY[4] = { 50.0f, -38.0f, 20.0f, -60.0f };
-                        const float streakWidths[4]   = { 450.0f, 560.0f, 340.0f, 500.0f };
-                        const float streakSpeeds[4]   = { 2600.0f, -2900.0f, 3300.0f, -2400.0f };
-                        for (int i = 0; i < 4; ++i) {
-                            float travel = std::fmod(t * streakSpeeds[i] + i * 370.0f, clientW + 600.0f);
-                            float sx = (streakSpeeds[i] > 0.0f) ? (-halfClientW - 300.0f + travel) : (halfClientW + 300.0f - travel);
-                            float sy = streakOffsetsY[i] * barOpen + sx * std::tan(-visorTilt);
-                            Vector3 sCol = (i % 2 == 0) ? themeAccent : themePrimary;
-                            drawCenteredSprite(phaseIntroStreakSprites_[i].get(), sx, sy, streakWidths[i], 3.5f, visorTilt, { sCol.x, sCol.y, sCol.z, 0.70f * barOpen * exitFade });
-                        }
+                            // 帯の内部を左右に高速疾走する4本のレッド＆ゴールド光条ストリーク (streakSprites 0..3)
+                            const float streakY[4]   = { 64.0f, -64.0f, 42.0f, -42.0f };
+                            const float streakSpd[4] = { 3100.0f, -3300.0f, -2600.0f, 2900.0f };
+                            const float streakW[4]   = { 440.0f, 500.0f, 320.0f, 380.0f };
+                            for (int i = 0; i < 4; ++i) {
+                                float rawX = std::fmod(t * std::abs(streakSpd[i]) + i * 410.0f, clientW + 900.0f) - (halfClientW + 450.0f);
+                                float sx = (streakSpd[i] >= 0.0f) ? rawX : -rawX;
+                                sx += (sx < 0.0f) ? -exitSplitX : exitSplitX;
+                                Vector4 sCol = (i % 2 == 0) ? Vector4{ 1.0f, 0.85f, 0.20f, 0.80f * fadeAlpha } : Vector4{ 1.0f, 0.18f, 0.12f, 0.80f * fadeAlpha };
+                                drawWarnCentered(phaseIntroStreakSprites_[i].get(), sx, streakY[i], streakW[i], 3.5f, 0.0f, sCol);
+                            }
 
-                        // 左右の回転サイバーダイヤモンド
-                        if (barOpen * exitFade > 0.05f) {
+                            // 「WARNING」の両脇で回転・脈動する2重ハザード・ダイヤモンドエンブレム (streakSprites 4..7)
                             float diaRot = static_cast<float>(M_PI) * 0.25f + t * 5.0f;
-                            float diaScale = 25.0f * barOpen * (1.0f + 0.18f * std::sin(t * 20.0f));
-                            float diaOffsetX = 430.0f + (1.0f - barOpen) * 180.0f + exitSplitX;
-                            drawCenteredSprite(phaseIntroStreakSprites_[4].get(), -diaOffsetX, -diaOffsetX * std::tan(-visorTilt), diaScale, diaScale, diaRot, { themeAccent.x, themeAccent.y, themeAccent.z, 0.90f * barOpen * exitFade });
-                            drawCenteredSprite(phaseIntroStreakSprites_[5].get(),  diaOffsetX,  diaOffsetX * std::tan(-visorTilt), diaScale, diaScale, -diaRot, { themeAccent.x, themeAccent.y, themeAccent.z, 0.90f * barOpen * exitFade });
+                            float diaOuter = (28.0f + 8.0f * beatImpact) * slideIn;
+                            float diaInner = diaOuter * 0.52f;
+                            float diaX = 415.0f + (1.0f - slideIn) * 160.0f + exitSplitX;
+                            drawWarnCentered(phaseIntroStreakSprites_[4].get(), -diaX, 0.0f, diaOuter, diaOuter,  diaRot, { 1.0f, 0.18f, 0.12f, 0.90f * fadeAlpha });
+                            drawWarnCentered(phaseIntroStreakSprites_[5].get(),  diaX, 0.0f, diaOuter, diaOuter, -diaRot, { 1.0f, 0.18f, 0.12f, 0.90f * fadeAlpha });
+                            drawWarnCentered(phaseIntroStreakSprites_[6].get(), -diaX, 0.0f, diaInner, diaInner, -diaRot * 1.5f, { 1.0f, 0.88f, 0.22f, 0.95f * fadeAlpha });
+                            drawWarnCentered(phaseIntroStreakSprites_[7].get(),  diaX, 0.0f, diaInner, diaInner,  diaRot * 1.5f, { 1.0f, 0.88f, 0.22f, 0.95f * fadeAlpha });
                         }
 
-                        // ⑤ 「WARNING」ロゴ本体＆残像オーラスプライトの計算・描画
+                        // ④ 画面中央の「WARNING」ロゴ本体＆衝撃波オーラ＆グリッチ＆中央一閃分割退場
+                        // ※warning_text.png (800x200) 内で文字が [X:159..512, Y:32..119] に偏っているため、
+                        //   文字領域ジャスト [left=156, top=29, width=360, height=94] をクロップして画面の完全な真ん中(0,0)に配置！
                         if (warningTextSprite_) {
-                            float baseW = (float)warningTextSprite_->GetMetadata().width;
-                            float baseH = (float)warningTextSprite_->GetMetadata().height;
-                            if (baseW <= 1.0f || baseH <= 1.0f) {
-                                baseW = 760.0f;
-                                baseH = 190.0f;
-                            }
-                            // 画面上の基本表示サイズ (横幅 約 700px)
-                            float targetW = 700.0f;
-                            float targetH = targetW * (baseH / baseW);
+                            const float kCropLeft = 156.0f;
+                            const float kCropTop  = 29.0f;
+                            const float kCropW    = 360.0f;
+                            const float kCropH    = 94.0f;
 
-                            warningTextSprite_->SetTextureRect(0.0f, 0.0f, baseW, baseH);
-                            for (int g = 0; g < 2; ++g) {
-                                if (warningGhostSprites_[g]) warningGhostSprites_[g]->SetTextureRect(0.0f, 0.0f, baseW, baseH);
+                            // 基準表示サイズ（元の文字比率 360:94 を正確に保ったまま迫力あるサイズで表示）
+                            const float kBaseTextW = 650.0f;
+                            const float kBaseTextH = 170.0f;
+
+                            // 毎フレーム最初にクロップ領域を文字全体へセット
+                            warningTextSprite_->SetTextureRect(kCropLeft, kCropTop, kCropW, kCropH);
+                            for (int g = 0; g < 3; ++g) {
+                                if (warningTextGhostSprites_[g]) {
+                                    warningTextGhostSprites_[g]->SetTextureRect(kCropLeft, kCropTop, kCropW, kCropH);
+                                }
                             }
 
-                            if (t < 0.42f) {
-                                // フェーズA: 画面奥・超音速ソニックブーム突入 (0.0s 〜 0.42s)
-                                float u = t / 0.42f;
+                            if (t < 0.28f) {
+                                // フェーズA (0.0s ～ 0.28s): 左右からの高速クロス残像収束＆ズームスラムイン
+                                float u = t / 0.28f;
                                 float easeOut = 1.0f - std::pow(1.0f - u, 4.0f);
-                                
-                                // 高速ストレッチ（横に伸び、縦に圧縮された超音速突入姿勢から定位置へ戻る）
-                                float scaleX = std::lerp(2.20f, 1.0f, easeOut);
-                                float scaleY = std::lerp(0.50f, 1.0f, easeOut);
-                                float alpha = std::clamp(u * 2.2f, 0.0f, 1.0f);
-                                float textRot = (1.0f - easeOut) * -0.04f;
+                                float zoomScale = std::lerp(2.25f, 1.0f, easeOut);
+                                float alpha = std::clamp(u * 2.5f, 0.0f, 1.0f);
 
-                                float scrW = targetW * scaleX;
-                                float scrH = targetH * scaleY;
+                                float w = kBaseTextW * zoomScale;
+                                float h = kBaseTextH * zoomScale;
 
-                                // 画面奥/前方からの超高速突入オフセット
-                                float offX = (1.0f - easeOut) * -120.0f;
-                                float offY = (1.0f - easeOut) * 25.0f;
-
-                                // 左右に引く鮮烈な深紅＆オレンジの光速残像ブラー
-                                for (int g = 0; g < 2; ++g) {
-                                    float lag = (float)(g + 1) * 95.0f * (1.0f - easeOut);
-                                    Vector3 gCol = (g == 0) ? themeAccent : themePrimary;
-                                    float gAlpha = alpha * (0.65f - g * 0.25f);
-                                    if (warningGhostSprites_[g]) {
-                                        warningGhostSprites_[g]->SetTextureRect(0.0f, 0.0f, baseW, baseH);
-                                        // 左右に赤い残像ストリークを引く
-                                        drawCenteredSprite(warningGhostSprites_[g].get(), offX - lag, offY, scrW, scrH, textRot, { gCol.x, gCol.y, gCol.z, gAlpha });
-                                        drawCenteredSprite(warningGhostSprites_[g].get(), offX + lag, offY, scrW, scrH, textRot, { gCol.x, gCol.y, gCol.z, gAlpha });
-                                    }
+                                // 左右から中央(0,0)へ高速収束するクリムゾン＆アンバー残像
+                                float ghostShift = (1.0f - easeOut) * 640.0f;
+                                if (warningTextGhostSprites_[0]) {
+                                    drawWarnCentered(warningTextGhostSprites_[0].get(), -ghostShift, 0.0f, w, h, 0.0f, { 1.0f, 0.15f, 0.10f, alpha * 0.65f });
+                                }
+                                if (warningTextGhostSprites_[1]) {
+                                    drawWarnCentered(warningTextGhostSprites_[1].get(),  ghostShift, 0.0f, w, h, 0.0f, { 1.0f, 0.85f, 0.20f, alpha * 0.65f });
                                 }
 
-                                // 本体：美しい完全なロゴのまま中央へガツンと突入
-                                warningTextSprite_->SetTextureRect(0.0f, 0.0f, baseW, baseH);
-                                drawCenteredSprite(warningTextSprite_.get(), offX, offY, scrW, scrH, textRot, { 1.0f, 1.0f, 1.0f, alpha });
-                            } else if (t < 1.75f) {
-                                // フェーズB: ソニックブーム合体ロック＆ブースト巡航 (0.42s 〜 1.75s)
-                                float elapsed = t - 0.42f;
-                                float impactBounce = 0.0f;
-                                if (elapsed < 0.20f) {
-                                    float bu = 1.0f - (elapsed / 0.20f);
-                                    impactBounce = 0.36f * bu * bu;
-                                }
-                                float slowZoom = 0.06f * (elapsed / (1.75f - 0.42f));
-                                float scaleX = 1.0f + impactBounce + slowZoom;
-                                float scaleY = 1.0f + impactBounce + slowZoom;
+                                drawWarnCentered(warningTextSprite_.get(), 0.0f, 0.0f, w, h, 0.0f, { 1.0f, 1.0f, 1.0f, alpha });
+                            } else if (t < 2.00f) {
+                                // フェーズB (0.28s ～ 2.00s): サイレン鼓動バウンス・拡散ショックウェーブ残像・サイバーグリッチ
+                                float scale = 1.0f + 0.14f * beatImpact;
+                                float w = kBaseTextW * scale;
+                                float h = kBaseTextH * scale;
 
-                                // 着弾直後の高周波激震シェイク
-                                float shakeAmp = (elapsed < 0.22f) ? (1.0f - elapsed / 0.22f) * 14.0f : 1.4f;
-                                float shakeX = std::sin(t * 160.0f) * shakeAmp;
-                                float shakeY = std::cos(t * 180.0f) * shakeAmp * 0.6f;
+                                // 揺れなしで中央にピタッと固定
+                                float shakeX = 0.0f;
+                                float shakeY = 0.0f;
 
-                                // 鼓動する警告オーラ残像
-                                for (int g = 0; g < 2; ++g) {
-                                    float pulsePhase = std::fmod(elapsed * 2.4f + g * 0.5f, 1.0f);
-                                    float auraScale = scaleX * (1.05f + 0.45f * pulsePhase);
-                                    float auraAlpha = (1.0f - pulsePhase) * 0.55f;
-                                    Vector3 gCol = (g == 0) ? themePrimary : themeAccent;
-                                    if (warningGhostSprites_[g]) {
-                                        warningGhostSprites_[g]->SetTextureRect(0.0f, 0.0f, baseW, baseH);
-                                        drawCenteredSprite(warningGhostSprites_[g].get(), shakeX, shakeY, targetW * auraScale, targetH * auraScale, 0.0f, { gCol.x, gCol.y, gCol.z, auraAlpha });
-                                    }
+                                // 1. 背面から周期的に拡大拡散するクリムゾン＆ゴールド衝撃波オーラ
+                                if (warningTextGhostSprites_[0]) {
+                                    float auraScale = 1.04f + 0.58f * beatPhase;
+                                    float auraAlpha = (1.0f - beatPhase) * 0.65f;
+                                    drawWarnCentered(warningTextGhostSprites_[0].get(), shakeX, shakeY, kBaseTextW * auraScale, kBaseTextH * auraScale, 0.0f, { 1.0f, 0.22f, 0.12f, auraAlpha });
                                 }
 
-                                // 赤みを帯びた警告グローパルス
-                                float glowWave = 0.5f + 0.5f * std::sin(t * 18.0f);
-                                Vector4 mainCol = { 1.0f, std::lerp(0.85f, 1.0f, glowWave), std::lerp(0.85f, 1.0f, glowWave), 1.0f };
-                                warningTextSprite_->SetTextureRect(0.0f, 0.0f, baseW, baseH);
-                                drawCenteredSprite(warningTextSprite_.get(), shakeX, shakeY, targetW * scaleX, targetH * scaleY, 0.0f, mainCol);
+                                // 2. サイバーグリッチ残像（横方向へ瞬間的にズレる高輝度アンバーゴースト）
+                                if (warningTextGhostSprites_[1]) {
+                                    float glitchWave = std::sin(t * 48.0f) * std::cos(t * 31.0f);
+                                    float glitchOffsetX = (std::abs(glitchWave) > 0.62f) ? (glitchWave * 28.0f) : (beatImpact * 14.0f);
+                                    float glitchOffsetY = (std::abs(glitchWave) > 0.62f) ? -4.0f : 0.0f;
+                                    drawWarnCentered(warningTextGhostSprites_[1].get(), shakeX + glitchOffsetX, shakeY + glitchOffsetY, w * 1.02f, h * 1.02f, 0.0f, { 1.0f, 0.85f, 0.20f, 0.48f });
+                                }
+
+                                // 3. 本体ロゴ（画面ど真ん中 (0,0) に完全ロック！）
+                                float glowTint = 0.88f + 0.12f * beatImpact;
+                                drawWarnCentered(warningTextSprite_.get(), shakeX, shakeY, w, h, 0.0f, { 1.0f, glowTint, glowTint, 1.0f });
                             } else {
-                                // フェーズC: 中央から真っ二つに斬られて左右へスライドしながら消える切断演出 (1.75s 〜 2.45s)
-                                float scaleX = 1.06f;
-                                float scaleY = 1.06f;
-                                float alpha = exitFade;
+                                // フェーズC (2.00s ～ 2.50s): 中央(X=0)から真っ二つに斬られて左右へスライドしながら消える演出
+                                // ※縦につぶさず美しい比率(1.06倍)を維持したまま、左半分と右半分に分割して左右へ移動
+                                float scale = 1.06f;
+                                float fullW = kBaseTextW * scale;
+                                float fullH = kBaseTextH * scale;
+                                float halfScreenW = fullW * 0.5f;
+                                float halfTexW    = kCropW * 0.5f;
 
-                                float sw = targetW * scaleX;
-                                float sh = targetH * scaleY;
+                                float leftPieceCX  = -halfScreenW * 0.5f - exitSplitX;
+                                float rightPieceCX =  halfScreenW * 0.5f + exitSplitX;
 
-                                float halfTexW = baseW * 0.5f;
-                                float halfScrW = sw * 0.5f;
-
-                                float leftPieceCenterX  = -halfScrW * 0.5f - exitSplitX;
-                                float rightPieceCenterX =  halfScrW * 0.5f + exitSplitX;
-
-                                // 移動軌跡の残像
-                                float trailShift = (std::min)(60.0f, exitSplitX * 0.22f);
-                                float ghostAlpha = alpha * 0.45f;
-                                if (warningGhostSprites_[1]) {
-                                    warningGhostSprites_[1]->SetTextureRect(0.0f, 0.0f, halfTexW, baseH);
-                                    drawCenteredSprite(warningGhostSprites_[1].get(), leftPieceCenterX + trailShift, 0.0f, halfScrW, sh, 0.0f, { themeAccent.x, themeAccent.y, themeAccent.z, ghostAlpha });
+                                // 移動軌跡の残像（ghostSprites 1, 2 にそれぞれ独立して割り当て）
+                                float trailShift = (std::min)(55.0f, exitSplitX * 0.22f);
+                                if (warningTextGhostSprites_[1]) {
+                                    warningTextGhostSprites_[1]->SetTextureRect(kCropLeft, kCropTop, halfTexW, kCropH);
+                                    drawWarnCentered(warningTextGhostSprites_[1].get(), leftPieceCX + trailShift, 0.0f, halfScreenW, fullH, 0.0f, { 1.0f, 0.25f, 0.12f, fadeAlpha * 0.50f });
                                 }
-                                if (warningGhostSprites_[0]) {
-                                    warningGhostSprites_[0]->SetTextureRect(halfTexW, 0.0f, halfTexW, baseH);
-                                    drawCenteredSprite(warningGhostSprites_[0].get(), rightPieceCenterX - trailShift, 0.0f, halfScrW, sh, 0.0f, { themeAccent.x, themeAccent.y, themeAccent.z, ghostAlpha });
+                                if (warningTextGhostSprites_[2]) {
+                                    warningTextGhostSprites_[2]->SetTextureRect(kCropLeft + halfTexW, kCropTop, halfTexW, kCropH);
+                                    drawWarnCentered(warningTextGhostSprites_[2].get(), rightPieceCX - trailShift, 0.0f, halfScreenW, fullH, 0.0f, { 1.0f, 0.25f, 0.12f, fadeAlpha * 0.50f });
                                 }
 
-                                // 本体：左半分を左へスライド描画
-                                warningTextSprite_->SetTextureRect(0.0f, 0.0f, halfTexW, baseH);
-                                drawCenteredSprite(warningTextSprite_.get(), leftPieceCenterX, 0.0f, halfScrW, sh, 0.0f, { 1.0f, 1.0f, 1.0f, alpha });
+                                // 本体：左半分（「WAR」）を左へスライド描画
+                                warningTextSprite_->SetTextureRect(kCropLeft, kCropTop, halfTexW, kCropH);
+                                drawWarnCentered(warningTextSprite_.get(), leftPieceCX, 0.0f, halfScreenW, fullH, 0.0f, { 1.0f, 1.0f, 1.0f, fadeAlpha });
 
-                                // 本体：右半分を右へスライド描画
-                                if (warningGhostSprites_[0]) {
-                                    warningGhostSprites_[0]->SetTextureRect(halfTexW, 0.0f, halfTexW, baseH);
-                                    drawCenteredSprite(warningGhostSprites_[0].get(), rightPieceCenterX, 0.0f, halfScrW, sh, 0.0f, { 1.0f, 1.0f, 1.0f, alpha });
+                                // 本体：右半分（「NING」）を右へスライド描画
+                                if (warningTextGhostSprites_[0]) {
+                                    warningTextGhostSprites_[0]->SetTextureRect(kCropLeft + halfTexW, kCropTop, halfTexW, kCropH);
+                                    drawWarnCentered(warningTextGhostSprites_[0].get(), rightPieceCX, 0.0f, halfScreenW, fullH, 0.0f, { 1.0f, 1.0f, 1.0f, fadeAlpha });
                                 }
                             }
                         }
 
-                        // ⑥ ソニックブーム合体閃光 ＆ 中央一閃スラッシュ（最前面）
-                        if (t >= 0.40f && t < 0.70f) {
-                            float u = (t - 0.40f) / 0.30f;
-                            float beamH = 48.0f * (1.0f - u) * (1.0f - u);
-                            float beamAlpha = (1.0f - u);
-                            drawCenteredSprite(phaseIntroBandSprites_[5].get(), 0.0f, 0.0f, clientW + 200.0f, beamH, visorTilt, { 1.0f, 0.90f, 0.80f, beamAlpha });
-                        } else if (t >= 1.70f && t < 2.15f) {
-                            float u = std::clamp((t - 1.70f) / 0.45f, 0.0f, 1.0f);
-                            float slashLen = std::lerp(180.0f, 560.0f, (std::min)(1.0f, u * 3.5f));
+                        // ⑤ ロックオン合体閃光＆退場時の中央一閃スラッシュ（最前面: bandSprites 5）
+                        if (t >= 0.22f && t < 0.48f) {
+                            float u = (t - 0.22f) / 0.26f;
+                            float beamH = 40.0f * (1.0f - u) * (1.0f - u);
+                            drawWarnCentered(phaseIntroBandSprites_[5].get(), 0.0f, 0.0f, clientW + 200.0f, beamH, 0.0f, { 1.0f, 0.92f, 0.75f, 1.0f - u });
+                        } else if (t >= 1.98f && t < 2.38f) {
+                            // 中央(X=0)を縦に斬り裂くクリムゾン＆ホワイトの一閃スラッシュ
+                            float u = std::clamp((t - 1.98f) / 0.40f, 0.0f, 1.0f);
+                            float slashLen = std::lerp(180.0f, 540.0f, (std::min)(1.0f, u * 3.5f));
                             float slashThickness = 24.0f * (1.0f - u) * (1.0f - u);
-                            float slashRot = static_cast<float>(M_PI) * 0.5f - 0.08f;
-                            drawCenteredSprite(phaseIntroBandSprites_[5].get(), 0.0f, 0.0f, slashLen, slashThickness, slashRot, { 1.0f, 0.95f, 0.90f, 1.0f - u });
+                            float slashRot = static_cast<float>(M_PI) * 0.5f - 0.06f;
+                            drawWarnCentered(phaseIntroBandSprites_[5].get(), 0.0f, 0.0f, slashLen, slashThickness, slashRot, { 1.0f, 0.90f, 0.80f, 1.0f - u });
                         }
                     }
                 }
@@ -7632,30 +7397,30 @@ void GamePlayScene::EmitHitEffect(const Vector3& pos) {
         }
     }
 
-    // ── ダイナミック画面演出（カメラ揺れ・ラジアルブラー・フラッシュ等）はデモモード時のみ発動（通常プレイでの敵被弾・撃破時は画面を揺らしたりぼかしたりしない） ──
-    if (isDemoMode_) {
-        float shakeMultiplier = isMelee ? 1.6f : 0.8f;
-        float hitstopMultiplier = isMelee ? 1.8f : 1.0f;
+    // ── ダイナミック画面演出のトリガー（近接時は約1.5〜1.8倍に強化。射撃時は強さを20%に抑えプレイしやすく調整） ──
+    float shakeMultiplier = isMelee ? 1.6f : 0.8f;
+    float hitstopMultiplier = isMelee ? 1.8f : 1.0f;
 
-        activeShakeIntensity_ = cameraShakeIntensity_ * (isMelee ? 1.6f : 0.20f);
-        cameraShakeTimer_ = cameraShakeTimeMax_ * shakeMultiplier;
-        hitstopTimer_ = isMelee ? (hitstopTimeMax_ * hitstopMultiplier) : 0.0f;
-        
-        if (useRadialBlur_) {
-            blurIntensity_ = maxBlurWidth_ * (isMelee ? 1.5f : 1.0f);
-        }
-        if (useImpactFlash_) {
-            flashAlpha_ = isMelee ? 0.80f : 0.55f; // 近接はフラッシュ強め
-            if (selectedEffectPreset_ == 1) flashColor_ = {1.0f, 0.4f, 0.1f, 1.0f};
-            else if (selectedEffectPreset_ == 2) flashColor_ = {0.2f, 0.8f, 1.0f, 1.0f};
-            else if (selectedEffectPreset_ == 4) flashColor_ = {0.15f, 0.0f, 0.25f, 1.0f}; // 特異点は暗い黒紫色
-            else if (selectedEffectPreset_ == 5) flashColor_ = {0.4f, 0.75f, 1.0f, 1.0f};
-            else if (selectedEffectPreset_ == 8) flashColor_ = {1.0f, 0.95f, 0.5f, 1.0f};
-            else if (selectedEffectPreset_ == 9) flashColor_ = {0.35f, 0.0f, 0.55f, 1.0f};
-            else flashColor_ = {1.0f, 1.0f, 1.0f, 1.0f};
-        } else {
-            flashAlpha_ = 0.0f;
-        }
+    activeShakeIntensity_ = cameraShakeIntensity_ * (isMelee ? 1.6f : 0.20f);
+    cameraShakeTimer_ = cameraShakeTimeMax_ * shakeMultiplier;
+    hitstopTimer_ = isMelee ? (hitstopTimeMax_ * hitstopMultiplier) : 0.0f;
+    
+    // デジタルバグ（Preset 6）の砂嵐演出は無効化 (ユーザー要求により削除)
+
+    if (useRadialBlur_) {
+        blurIntensity_ = maxBlurWidth_ * (isMelee ? 1.5f : 1.0f);
+    }
+    if (useImpactFlash_) {
+        flashAlpha_ = isMelee ? 0.80f : 0.55f; // 近接はフラッシュ強め
+        if (selectedEffectPreset_ == 1) flashColor_ = {1.0f, 0.4f, 0.1f, 1.0f};
+        else if (selectedEffectPreset_ == 2) flashColor_ = {0.2f, 0.8f, 1.0f, 1.0f};
+        else if (selectedEffectPreset_ == 4) flashColor_ = {0.15f, 0.0f, 0.25f, 1.0f}; // 特異点は暗い黒紫色
+        else if (selectedEffectPreset_ == 5) flashColor_ = {0.4f, 0.75f, 1.0f, 1.0f};
+        else if (selectedEffectPreset_ == 8) flashColor_ = {1.0f, 0.95f, 0.5f, 1.0f};
+        else if (selectedEffectPreset_ == 9) flashColor_ = {0.35f, 0.0f, 0.55f, 1.0f};
+        else flashColor_ = {1.0f, 1.0f, 1.0f, 1.0f};
+    } else {
+        flashAlpha_ = 0.0f;
     }
 }
 
@@ -7677,7 +7442,7 @@ void GamePlayScene::DrawDemo() {
         if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
 
         // プレイヤー戦闘機の描画
-        if (fighterModel_ && fighterTransformResource_ && !LoadingScreen::GetInstance()->ShouldHideInGamePlayer() && !isFighterDestroyed_) {
+        if (fighterModel_ && fighterTransformResource_ && !LoadingScreen::GetInstance()->ShouldHideInGamePlayer()) {
             commandList->SetGraphicsRootConstantBufferView(1, fighterTransformResource_->GetGPUVirtualAddress());
             fighterModel_->DrawModel(commandList, TextureManager::GetInstance()->GetSrvHandleGPU("Player2/Player_basecolor.JPEG"), TextureManager::GetInstance()->GetSrvHandleGPU("test.dds"));
         }

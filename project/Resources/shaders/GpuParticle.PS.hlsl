@@ -10,9 +10,6 @@ struct PixelShaderInput {
 };
 
 float4 main(PixelShaderInput input) : SV_TARGET {
-    if (input.color.a <= 0.0f) {
-        discard;
-    }
     float2 uv = input.texcoord - 0.5f;
     float dist = length(uv);
 
