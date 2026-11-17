@@ -792,6 +792,24 @@ private:
     bool hasHitBoss_ = false; // ボスにヒットしたか
     float bossDefeatHitTimer_ = 0.0f; // ヒット後の経過時間タイマー
 
+    // ボス撃破時のバラバラ崩壊＆機能停止物理用
+    struct BossPartPhysics {
+        Matrix4x4 initialWorld{};
+        Vector3 initialPos = { 0.0f, 0.0f, 0.0f };
+        Vector3 offset = { 0.0f, 0.0f, 0.0f };
+        Vector3 velocity = { 0.0f, 0.0f, 0.0f };
+        Vector3 rotAngle = { 0.0f, 0.0f, 0.0f };
+        Vector3 angVel = { 0.0f, 0.0f, 0.0f };
+        float detachTime = 0.0f;
+        bool detached = false;
+        bool grounded = false;
+        bool impactTriggered = false;
+    };
+    BossPartPhysics bossBodyDebris_{};
+    BossPartPhysics bossLegDebris_[8]{};
+    float bossDebrisSparkTimer_ = 0.0f;
+    int bossCollapseExplosionCount_ = 0;
+
     // ── 地形(Terrain)用 ──
     std::unique_ptr<Model> terrainModel_;
     Microsoft::WRL::ComPtr<ID3D12Resource> terrainTransformResource_;

@@ -427,6 +427,12 @@ void GamePlayScene::Initialize() {
     isBossModelVisible_ = true;
     hasHitBoss_ = false;
     bossDefeatHitTimer_ = 0.0f;
+    bossDebrisSparkTimer_ = 0.0f;
+    bossCollapseExplosionCount_ = 0;
+    bossBodyDebris_ = {};
+    for (int i = 0; i < 8; ++i) {
+        bossLegDebris_[i] = {};
+    }
 
     // 敵小隊と敵の初期化（オブジェクトプール・無限フォーメーションスポーン式）
 
@@ -1977,10 +1983,67 @@ void GamePlayScene::Update() {
     if (bossHP_ <= 0.0f && !isBossDefeatedSequence_) {
         isBossDefeatedSequence_ = true;
         bossDefeatTimer_ = 0.0f;
-        hasHitBoss_ = false;
+        hasHitBoss_ = true;
         isBossModelVisible_ = true;
         isDefeatBulletActive_ = false;
         bossDefeatHitTimer_ = 0.0f;
+        bossDebrisSparkTimer_ = 0.0f;
+        bossCollapseExplosionCount_ = 0;
+
+        // 現在のボス胴体・8本脚のワールド行列をキャプチャ（膝から崩れ落ちる→順次爆発分離へ）
+        Vector3 bossPosNow = GetBossPosition(0.0f);
+        std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+        if (bossBodyTransformData_) {
+            bossBodyDebris_ = {};
+            bossBodyDebris_.initialWorld = bossBodyTransformData_->World;
+            bossBodyDebris_.initialPos = {
+                bossBodyTransformData_->World.m[3][0],
+                bossBodyTransformData_->World.m[3][1],
+                bossBodyTransformData_->World.m[3][2]
+            };
+            bossBodyDebris_.detachTime = 2.65f; // 最後の爆発で少し跳ねる
+            bossBodyDebris_.velocity = { (dist01(randomEngine_) - 0.5f) * 6.0f, 9.0f, (dist01(randomEngine_) - 0.5f) * 6.0f };
+            bossBodyDebris_.angVel = { 0.35f, (dist01(randomEngine_) - 0.5f) * 0.3f, (dist01(randomEngine_) - 0.5f) * 0.45f };
+        }
+        // 脚の分離タイミング（4回の爆発に合わせて2本ずつバラバラに弾け飛ぶ）
+        const float legDetachTimes[8] = { 0.65f, 1.15f, 1.65f, 2.15f, 0.65f, 1.15f, 1.65f, 2.15f };
+        for (int li = 0; li < 8; ++li) {
+            bossLegDebris_[li] = {};
+            if (bossLegTransformData_[li]) {
+                bossLegDebris_[li].initialWorld = bossLegTransformData_[li]->World;
+                bossLegDebris_[li].initialPos = {
+                    bossLegTransformData_[li]->World.m[3][0],
+                    bossLegTransformData_[li]->World.m[3][1],
+                    bossLegTransformData_[li]->World.m[3][2]
+                };
+            } else {
+                bossLegDebris_[li].initialWorld = MakeIdentity4x4();
+                bossLegDebris_[li].initialPos = bossPosNow;
+            }
+            bossLegDebris_[li].detachTime = legDetachTimes[li];
+
+            Vector3 outDir = Subtract(bossLegDebris_[li].initialPos, bossPosNow);
+            outDir.y = 0.0f;
+            float outLen = Length(outDir);
+            if (outLen > 0.01f) {
+                outDir = Scale(outDir, 1.0f / outLen);
+            } else {
+                float ang = (static_cast<float>(li) / 8.0f) * 2.0f * static_cast<float>(M_PI);
+                outDir = { std::cos(ang), 0.0f, std::sin(ang) };
+            }
+            float outSpeed = 16.0f + dist01(randomEngine_) * 16.0f;
+            float upSpeed = 12.0f + dist01(randomEngine_) * 14.0f;
+            bossLegDebris_[li].velocity = {
+                outDir.x * outSpeed + (dist01(randomEngine_) - 0.5f) * 6.0f,
+                upSpeed,
+                outDir.z * outSpeed + (dist01(randomEngine_) - 0.5f) * 6.0f
+            };
+            bossLegDebris_[li].angVel = {
+                (dist01(randomEngine_) - 0.5f) * 5.0f,
+                (dist01(randomEngine_) - 0.5f) * 5.0f,
+                (dist01(randomEngine_) - 0.5f) * 5.0f
+            };
+        }
         
         // パーティクルを一旦すべてクリア（土・石の破片バースト予約も解除）
         if (particleManager_) {
@@ -2004,10 +2067,10 @@ void GamePlayScene::Update() {
 
     if (isBossDefeatedSequence_) {
         bossDefeatTimer_ += kDeltaTime;
-        
+
         // カメラトランスフォームの参照を取得
         EulerTransform& camTrans = camera_->GetTransform();
-        
+
         // 1. 自機を画面中央（X=0, Y=0）に滑らかに補間移動
         if (fighterModel_) {
             fighterModel_->transform.translate.x = std::lerp(fighterModel_->transform.translate.x, 0.0f, 0.1f);
@@ -2015,59 +2078,53 @@ void GamePlayScene::Update() {
             fighterModel_->transform.rotate.x = std::lerp(fighterModel_->transform.rotate.x, 0.0f, 0.1f);
             fighterModel_->transform.rotate.y = std::lerp(fighterModel_->transform.rotate.y, 0.0f, 0.1f);
             fighterModel_->transform.rotate.z = std::lerp(fighterModel_->transform.rotate.z, 0.0f, 0.1f);
-            
+
             // プレイヤーのロール・ピッチもリセット
             playerRotationRoll_ = std::lerp(playerRotationRoll_, 0.0f, 0.1f);
             playerRotationPitch_ = std::lerp(playerRotationPitch_, 0.0f, 0.1f);
         }
-        
-        // 演出中はプレイヤーとボスの前進・移動を完全に停止（その場で静止して演出）
-        // fighterWorldZ_ の前進処理を停止
-        
-        // 自機のワールド位置（曲がり角を曲がった後のレール座標系にも対応）
-        Vector3 defeatPlayerRailPos = GetRailPosition(fighterWorldZ_);
-        Vector3 defeatPlayerRailDir = GetRailDirection(fighterWorldZ_);
-        Vector3 defeatPlayerRailRight = CalculateRailRight(defeatPlayerRailDir);
-        Vector3 defeatPlayerRailUp = CalculateRailUp(defeatPlayerRailDir, defeatPlayerRailRight);
-        float defeatPlayerRelX = fighterModel_ ? fighterModel_->transform.translate.x : 0.0f;
-        float defeatPlayerRelY = (fighterModel_ ? fighterModel_->transform.translate.y : 0.0f) + 17.0f;
-        Vector3 fighterWorldPos = Add(
-            defeatPlayerRailPos,
-            Add(Scale(defeatPlayerRailRight, defeatPlayerRelX), Scale(defeatPlayerRailUp, defeatPlayerRelY))
-        );
-        
-        // ボスのワールド位置（演出中はバウンスも停止し、完全に静止）
+
+        // ボスのワールド位置（演出中はバウンスを停止し、崩れ落ちる動きのみを行う）
         float bodyBounce = 0.0f;
         Vector3 bossPos = GetBossPosition(bodyBounce);
-        
+
         // ==========================================
-        // 【カメラワーク】背後65m、高さ26m、ボス注視アングル（常に維持）
+        // 【カメラワーク】さらに高い位置からの斜め上俯瞰アングルでボス全体を見下ろす
         // ==========================================
-        float camProgress = fighterWorldZ_ - 65.0f;
-        Vector3 camRailPos = GetRailPosition(camProgress);
-        Vector3 camRailDir = GetRailDirection(camProgress);
-        Vector3 camRailRight = CalculateRailRight(camRailDir);
-        Vector3 camRailUp = CalculateRailUp(camRailDir, camRailRight);
-        Vector3 targetCamPos = Add(camRailPos, Scale(camRailUp, 26.0f)); // 通常時 Yオフセット 26.0f
-        
-        // 開始フレーム（最初のフレーム）は即座にワープ、それ以外はスムーズに補間
-        bool isStartFrame = (bossDefeatTimer_ <= kDeltaTime);
+        float bossProgress = fighterWorldZ_ + bossZOffset_;
+        Vector3 bRailDir = GetRailDirection(bossProgress);
+        Vector3 bRailRight = CalculateRailRight(bRailDir);
+        Vector3 bRailUp = CalculateRailUp(bRailDir, bRailRight);
+        Vector3 targetCamPos = Add(
+            bossPos,
+            Add(
+                Scale(bRailDir, -85.0f),
+                Add(
+                    Scale(bRailRight, 65.0f + std::sin(bossDefeatTimer_ * 0.4f) * 8.0f),
+                    Scale(bRailUp, 270.0f)
+                )
+            )
+        );
+
+        // 開始フレームは即座に俯瞰位置へ配置し、以降は滑らかに追従
+        bool isStartFrame = (bossDefeatTimer_ <= kDeltaTime * 1.5f);
         camTrans.translate = isStartFrame ? targetCamPos : Lerp(camTrans.translate, targetCamPos, 0.08f);
-        
-        // カメラからボスへの方向ベクトルから回転角を計算して注視させる
-        Vector3 lookDir = Subtract(bossPos, camTrans.translate);
+
+        // ボスが少し地面側へ沈むため、やや下寄りを注視する
+        Vector3 lookTarget = Add(bossPos, { 0.0f, -6.0f, 0.0f });
+        Vector3 lookDir = Subtract(lookTarget, camTrans.translate);
         float lookDist = Length(lookDir);
         if (lookDist > 0.001f) {
             lookDir = Scale(lookDir, 1.0f / lookDist);
         } else {
-            lookDir = camRailDir;
+            lookDir = bRailDir;
         }
-        
+
         float targetRotY = -std::atan2(lookDir.x, lookDir.z);
         float targetRotX = std::atan2(-lookDir.y, std::sqrt(lookDir.x * lookDir.x + lookDir.z * lookDir.z));
-        
+
         float rotLerpFactor = isStartFrame ? 1.0f : 0.08f;
-        
+
         float diffY = targetRotY - camTrans.rotate.y;
         while (diffY < -static_cast<float>(M_PI)) diffY += 2.0f * static_cast<float>(M_PI);
         while (diffY > static_cast<float>(M_PI)) diffY -= 2.0f * static_cast<float>(M_PI);
@@ -2077,159 +2134,168 @@ void GamePlayScene::Update() {
         while (diffX < -static_cast<float>(M_PI)) diffX += 2.0f * static_cast<float>(M_PI);
         while (diffX > static_cast<float>(M_PI)) diffX -= 2.0f * static_cast<float>(M_PI);
         camTrans.rotate.x += diffX * rotLerpFactor;
-        
-        camTrans.rotate.z = isStartFrame ? 0.0f : std::lerp(camTrans.rotate.z, 0.0f, rotLerpFactor);
-        
-        // ==========================================
-        // 【ボス撃破演出エフェクト】火花（Sparks）のみの洗練された演出
-        // ==========================================
-        if (bossDefeatTimer_ < 0.8f) {
-            // --- 溜め期の火花スパーク ---
-            if (particleManager_) {
-                particleManager_->EmitCustomSparks(fighterWorldPos, 60.0f, 12, { 1.0f, 0.8f, 0.2f }, 1.0f);
-            }
-            // 空間の微振動
-            cameraShakeTimer_ = 0.05f;
-            cameraShakeIntensity_ = 0.8f;
-            activeShakeIntensity_ = 0.8f;
-            cameraShakeTimeMax_ = 0.05f;
-        }
-        else if (isDefeatBulletActive_) {
-            // トドメ弾飛行中の火花スパーク
-            if (particleManager_) {
-                particleManager_->EmitCustomSparks(defeatBulletPos_, 80.0f, 15, { 1.0f, 0.7f, 0.1f }, 1.2f);
-            }
-        }
-        else if (hasHitBoss_) {
-            // --- 着弾後のボス全身火花スパークバースト ---
-            if (particleManager_) {
-                // 0.1秒おきにボスの胴体・関節から激しい火花が噴出
-                static float lastSparkTime = -1.0f;
-                if (bossDefeatHitTimer_ - lastSparkTime >= 0.1f) {
-                    lastSparkTime = bossDefeatHitTimer_;
-                    
-                    std::uniform_real_distribution<float> offsetDist(-18.0f, 18.0f);
-                    Vector3 sparkPos = {
-                        bossPos.x + offsetDist(randomEngine_),
-                        bossPos.y + offsetDist(randomEngine_),
-                        bossPos.z + offsetDist(randomEngine_)
-                    };
-                    
-                    // 高速度・高輝度の純粋な火花スパークのみを放射
-                    particleManager_->EmitCustomSparks(sparkPos, 180.0f, 40, { 1.0f, 0.85f, 0.3f }, 2.0f);
-                    particleManager_->EmitCustomSparks(sparkPos, 240.0f, 25, { 1.0f, 0.4f, 0.05f }, 2.5f);
-                }
-                
-                // 毎フレーム降り注ぐ連続スパーク（土と石が飛び散るGPUパーティクルは出さず、純粋な火花スパークのみにする）
-                particleManager_->EmitCustomSparks(bossPos, 140.0f, 20, { 1.0f, 0.9f, 0.4f }, 1.5f);
-            }
-        }
 
-        // 2. トドメの巨大弾の自動発射 (0.8秒時点)
-        if (bossDefeatTimer_ >= 0.8f && !isDefeatBulletActive_ && !hasHitBoss_) {
-            isDefeatBulletActive_ = true;
-            defeatBulletPos_ = fighterWorldPos;
-            Vector3 dir = Normalize(Subtract(bossPos, defeatBulletPos_));
-            float bulletSpeed = 380.0f;
-            defeatBulletVel_ = Scale(dir, bulletSpeed);
-            defeatBulletSize_ = 3.5f;
-            
-            // 発射瞬間の火花スパークバースト
-            if (particleManager_) {
-                particleManager_->EmitCustomSparks(fighterWorldPos, 120.0f, 50, { 1.0f, 0.8f, 0.2f }, 1.5f);
-            }
-            if (audio_) {
-                PlaySE(jumpSE_, false, 1.5f);
-            }
-        }
-        
-        // 3. トドメの巨大弾の更新とヒット判定
-        if (isDefeatBulletActive_) {
-            defeatBulletPos_ = Add(defeatBulletPos_, Scale(defeatBulletVel_, kDeltaTime));
-            
-            // 衝突判定 (ボスの衝突半径または弾の進行方向でボスに到達・追い抜いたか)
-            Vector3 diff = Subtract(bossPos, defeatBulletPos_);
-            float dist = Length(diff);
-            float forwardRemaining = diff.x * defeatBulletVel_.x + diff.y * defeatBulletVel_.y + diff.z * defeatBulletVel_.z;
-            if (dist <= bossCollisionRadius_ || forwardRemaining <= 0.0f) {
-                isDefeatBulletActive_ = false;
-                hasHitBoss_ = true;
-                isBossModelVisible_ = false; // ボスを消滅させる
-                bossDefeatHitTimer_ = 0.0f;  // ヒットした瞬間からタイマーを開始
-                
-                // ★★★ スローモーション（ヒットストップ）の発動 ★★★
-                hitstopTimer_ = 0.65f; // 0.65秒間超スローモーション化
-                
-                // 大きく白い十字Particleエフェクトを発生 (ボスのレール空間を考慮)
-                float bossProgress = fighterWorldZ_ + bossZOffset_;
-                Vector3 bRailDir = GetRailDirection(bossProgress);
-                Vector3 bRailRight = CalculateRailRight(bRailDir);
-                Vector3 bRailUp = CalculateRailUp(bRailDir, bRailRight);
-                particleManager_->EmitWhiteCross(bossPos, bRailRight, bRailUp);
-                
-                // 白い超巨大多重衝撃波リングと巨大シリンダーエフェクトを追加してかっこよく演出
-                particleManager_->EmitMegaRing(bossPos, {1.0f, 1.0f, 1.0f});
-                particleManager_->EmitMegaCylinder(bossPos, {1.0f, 1.0f, 1.0f});
-                
-                // 周囲に飛び散る純白の激しいスパークエフェクトを追加
-                particleManager_->EmitFlame(bossPos, 20.0f, 30, {1.0f, 1.0f, 1.0f});
-                
-                // ボスから地面・天に向けて四方八方に拡散する巨大稲妻を8本落とす
-                Vector3 lightningColor = { 1.0f, 1.0f, 1.0f };
-                for (int i = 0; i < 8; ++i) {
-                    float theta = (i / 8.0f) * 2.0f * static_cast<float>(M_PI);
-                    Vector3 strikeEnd = {
-                        bossPos.x + std::cos(theta) * 60.0f,
-                        bossPos.y - 40.0f, // 地面付近
-                        bossPos.z + std::sin(theta) * 60.0f
-                    };
-                    particleManager_->EmitLSystemLightning(bossPos, strikeEnd, 4, 1.2f, lightningColor);
-                }
-                
-                // 大爆発SE
-                if (audio_) {
-                    PlaySE(jumpSE_, false, 2.0f);
-                }
-                
-                // 画面インパクトフラッシュ (真っ白に)
-                flashAlpha_ = 1.0f;
-                flashColor_ = { 1.0f, 1.0f, 1.0f, 1.0f };
-                
-                // 強烈なラジアルブラーによる爆発の衝撃波画面の歪み表現
-                useRadialBlur_ = true;
-                blurIntensity_ = 0.12f;
-                maxBlurWidth_ = 0.12f;
-                
-                // 画面シェイクを2倍に強化して重厚な爆発振動を表現
-                cameraShakeTimer_ = 0.80f;
-                cameraShakeIntensity_ = 12.0f;
-                activeShakeIntensity_ = 12.0f;
-                cameraShakeTimeMax_ = 0.80f;
-            }
-        }
-        
-        // 被弾後タイマーのカウントを進める
+        camTrans.rotate.z = isStartFrame ? 0.0f : std::lerp(camTrans.rotate.z, 0.0f, rotLerpFactor);
+
+        // 機能停止・膝から崩れ落ちる演出＆軽い複数回の爆発でバラバラになる物理更新
         if (hasHitBoss_) {
             bossDefeatHitTimer_ += kDeltaTime;
-        }
-        
-        // フラッシュの減衰速度をトドメ演出中はさらにゆっくりにする（かつ最初は最大で維持）
-        if (flashAlpha_ > 0.0f) {
-            float originalFade = kDeltaTime * ((selectedEffectPreset_ == 8) ? 1.5f : 3.5f);
-            
-            // 命中後0.4秒間はフラッシュを完全に1.0f（最大値）にロックして輝かせる
-            if (bossDefeatHitTimer_ < 0.4f) {
-                flashAlpha_ = 1.0f;
-            } else {
-                // その後、非常にゆっくりフェードアウトさせる（減衰速度 0.6f）
-                float desiredFade = kDeltaTime * 0.6f;
-                flashAlpha_ += (originalFade - desiredFade);
-                flashAlpha_ = (std::min)(flashAlpha_, 1.0f);
+            bossDebrisSparkTimer_ += kDeltaTime;
+
+            // 機能停止に伴い機体の色が徐々に冷め切った暗い金属色へ落ちる
+            float powerDownT = std::clamp((bossDefeatHitTimer_ - 0.2f) / 1.8f, 0.0f, 1.0f);
+            float shade = std::lerp(1.0f, 0.30f, powerDownT);
+            Vector4 deadColor = { shade, shade * 1.02f, shade * 1.12f, 1.0f };
+
+            // 膝から崩れ落ちるアニメーション進行度（0.0秒～0.75秒）
+            float kneelT = std::clamp(bossDefeatHitTimer_ / 0.75f, 0.0f, 1.0f);
+            float easeKneel = kneelT * kneelT * (3.0f - 2.0f * kneelT);
+
+            // 軽い何回かの爆発（脚がペアで外れるタイミング＋最後の胴体分離タイミング）
+            auto triggerLightExplosion = [&](const Vector3& expPos, float seVolume, float shakePower) {
+                if (particleManager_) {
+                    particleManager_->EmitFlame(expPos, 10.0f, 14, { 1.0f, 0.55f, 0.15f });
+                    particleManager_->EmitCustomSparks(expPos, 95.0f, 16, { 1.0f, 0.75f, 0.25f }, 1.8f);
+                }
+                cameraShakeTimer_ = 0.18f;
+                cameraShakeIntensity_ = shakePower;
+                activeShakeIntensity_ = shakePower;
+                cameraShakeTimeMax_ = 0.18f;
+                if (audio_) {
+                    PlaySE(jumpSE_, false, seVolume);
+                }
+            };
+
+            if (bossCollapseExplosionCount_ == 0 && bossDefeatHitTimer_ >= 0.65f) {
+                bossCollapseExplosionCount_ = 1;
+                triggerLightExplosion(Add(bossLegDebris_[0].initialPos, bossLegDebris_[0].offset), 0.95f, 3.0f);
+                triggerLightExplosion(Add(bossLegDebris_[4].initialPos, bossLegDebris_[4].offset), 0.75f, 3.0f);
+            } else if (bossCollapseExplosionCount_ == 1 && bossDefeatHitTimer_ >= 1.15f) {
+                bossCollapseExplosionCount_ = 2;
+                triggerLightExplosion(Add(bossLegDebris_[1].initialPos, bossLegDebris_[1].offset), 0.95f, 3.0f);
+                triggerLightExplosion(Add(bossLegDebris_[5].initialPos, bossLegDebris_[5].offset), 0.75f, 3.0f);
+            } else if (bossCollapseExplosionCount_ == 2 && bossDefeatHitTimer_ >= 1.65f) {
+                bossCollapseExplosionCount_ = 3;
+                triggerLightExplosion(Add(bossLegDebris_[2].initialPos, bossLegDebris_[2].offset), 0.95f, 3.0f);
+                triggerLightExplosion(Add(bossLegDebris_[6].initialPos, bossLegDebris_[6].offset), 0.75f, 3.0f);
+            } else if (bossCollapseExplosionCount_ == 3 && bossDefeatHitTimer_ >= 2.15f) {
+                bossCollapseExplosionCount_ = 4;
+                triggerLightExplosion(Add(bossLegDebris_[3].initialPos, bossLegDebris_[3].offset), 0.95f, 3.0f);
+                triggerLightExplosion(Add(bossLegDebris_[7].initialPos, bossLegDebris_[7].offset), 0.75f, 3.0f);
+            } else if (bossCollapseExplosionCount_ == 4 && bossDefeatHitTimer_ >= 2.65f) {
+                bossCollapseExplosionCount_ = 5;
+                triggerLightExplosion(Add(bossBodyDebris_.initialPos, bossBodyDebris_.offset), 1.15f, 4.0f);
+            }
+
+            auto updatePartPhysics = [&](BossPartPhysics& part, TransformationMatrix* cbData, float floorHeight, float bounceFactor, float gravityAccel, bool isBody) {
+                if (!cbData) return;
+                cbData->color = deadColor;
+
+                if (bossDefeatHitTimer_ < part.detachTime) {
+                    // 分離前：膝から崩れ落ちるように沈み込み・前傾しつつ微かに機能停止の振動
+                    if (isBody) {
+                        part.offset.y = -11.0f * easeKneel;
+                        part.rotAngle.x = 0.35f * easeKneel;
+                    } else {
+                        Vector3 outDir = Subtract(part.initialPos, bossPos);
+                        outDir.y = 0.0f;
+                        float outLen = Length(outDir);
+                        if (outLen > 0.01f) {
+                            outDir = Scale(outDir, 1.0f / outLen);
+                        }
+                        part.offset.x = outDir.x * 3.5f * easeKneel;
+                        part.offset.z = outDir.z * 3.5f * easeKneel;
+                        part.offset.y = -6.5f * easeKneel;
+                    }
+
+                    float jitterAmp = isBody ? 0.18f : 0.25f;
+                    float jx = std::sin(bossDefeatHitTimer_ * 75.0f + part.initialPos.x) * jitterAmp;
+                    float jy = std::cos(bossDefeatHitTimer_ * 87.0f + part.initialPos.y) * jitterAmp;
+                    float jz = std::sin(bossDefeatHitTimer_ * 63.0f + part.initialPos.z) * jitterAmp;
+
+                    Matrix4x4 toOrigin = MakeTranslateMatrix({ -part.initialPos.x, -part.initialPos.y, -part.initialPos.z });
+                    Matrix4x4 rotMat = Multiply(Multiply(MakeRotateXMatrix(part.rotAngle.x), MakeRotateYMatrix(part.rotAngle.y)), MakeRotateZMatrix(part.rotAngle.z));
+                    Matrix4x4 backAndMove = MakeTranslateMatrix(Add(part.initialPos, Add(part.offset, { jx, jy, jz })));
+                    Matrix4x4 deltaWorld = Multiply(Multiply(toOrigin, rotMat), backAndMove);
+                    cbData->World = Multiply(part.initialWorld, deltaWorld);
+                    return;
+                }
+
+                if (!part.detached) {
+                    part.detached = true;
+                }
+
+                if (!part.grounded) {
+                    part.velocity.y -= gravityAccel * kDeltaTime;
+                    part.offset.x += part.velocity.x * kDeltaTime;
+                    part.offset.y += part.velocity.y * kDeltaTime;
+                    part.offset.z += part.velocity.z * kDeltaTime;
+
+                    part.rotAngle.x += part.angVel.x * kDeltaTime;
+                    part.rotAngle.y += part.angVel.y * kDeltaTime;
+                    part.rotAngle.z += part.angVel.z * kDeltaTime;
+
+                    float currentY = part.initialPos.y + part.offset.y;
+                    if (currentY <= floorHeight) {
+                        part.offset.y = floorHeight - part.initialPos.y;
+                        if (std::abs(part.velocity.y) > 7.5f) {
+                            part.velocity.y = -part.velocity.y * bounceFactor;
+                            part.velocity.x *= 0.52f;
+                            part.velocity.z *= 0.52f;
+                            part.angVel.x *= 0.45f;
+                            part.angVel.y *= 0.45f;
+                            part.angVel.z *= 0.45f;
+
+                            if (!part.impactTriggered) {
+                                part.impactTriggered = true;
+                                Vector3 hitPos = Add(part.initialPos, part.offset);
+                                if (particleManager_) {
+                                    particleManager_->EmitCustomSparks(hitPos, isBody ? 90.0f : 65.0f, isBody ? 20 : 10, { 1.0f, 0.65f, 0.2f }, 2.0f);
+                                }
+                                if (isBody) {
+                                    cameraShakeTimer_ = 0.25f;
+                                    cameraShakeIntensity_ = 4.0f;
+                                    activeShakeIntensity_ = 4.0f;
+                                    cameraShakeTimeMax_ = 0.25f;
+                                    if (audio_) PlaySE(jumpSE_, false, 1.0f);
+                                }
+                            }
+                        } else {
+                            part.velocity = { 0.0f, 0.0f, 0.0f };
+                            part.angVel = { 0.0f, 0.0f, 0.0f };
+                            part.grounded = true;
+                        }
+                    }
+                }
+
+                // パーツの初期ワールド中心を軸に回転させ、ワールドオフセット分だけ移動
+                Matrix4x4 toOrigin = MakeTranslateMatrix({ -part.initialPos.x, -part.initialPos.y, -part.initialPos.z });
+                Matrix4x4 rotMat = Multiply(Multiply(MakeRotateXMatrix(part.rotAngle.x), MakeRotateYMatrix(part.rotAngle.y)), MakeRotateZMatrix(part.rotAngle.z));
+                Matrix4x4 backAndMove = MakeTranslateMatrix(Add(part.initialPos, part.offset));
+                Matrix4x4 deltaWorld = Multiply(Multiply(toOrigin, rotMat), backAndMove);
+                cbData->World = Multiply(part.initialWorld, deltaWorld);
+            };
+
+            updatePartPhysics(bossBodyDebris_, bossBodyTransformData_, kFloorY + 6.5f, 0.18f, 46.0f, true);
+            for (int li = 0; li < 8; ++li) {
+                updatePartPhysics(bossLegDebris_[li], bossLegTransformData_[li], kFloorY + 1.8f, 0.28f, 42.0f, false);
+            }
+
+            // 機能停止後の余韻：壊れた胴体や脚から最後の微かなショート火花
+            if (bossDebrisSparkTimer_ >= 0.35f && bossDefeatHitTimer_ < 3.6f) {
+                bossDebrisSparkTimer_ = 0.0f;
+                if (particleManager_) {
+                    Vector3 bodyNow = Add(bossBodyDebris_.initialPos, bossBodyDebris_.offset);
+                    particleManager_->EmitCustomSparks(bodyNow, 50.0f, 6, { 0.45f, 0.85f, 1.0f }, 1.6f);
+                    int rLeg = rand() % 8;
+                    Vector3 legNow = Add(bossLegDebris_[rLeg].initialPos, bossLegDebris_[rLeg].offset);
+                    particleManager_->EmitCustomSparks(legNow, 45.0f, 5, { 1.0f, 0.7f, 0.2f }, 1.8f);
+                }
             }
         }
 
-        // 4. クリアシーンへの遷移判定 (撃破ヒット後、さらに2.0秒演出を持たせる)
-        if (hasHitBoss_ && bossDefeatHitTimer_ >= 2.0f) {
+        // クリアシーンへの遷移判定 (膝崩れ落ち＋連続小爆発でのバラバラ崩壊後、4.2秒でCLEARへ)
+        if (hasHitBoss_ && bossDefeatHitTimer_ >= 4.2f) {
             SceneManager::GetInstance()->ChangeScene("CLEAR");
             return;
         }
@@ -4752,7 +4818,7 @@ void GamePlayScene::Update() {
     }
 
     // ── 蜘蛛ボス（Big Spider）のトランスフォームとアニメーション更新 ──
-    if (!isTitleMode_ && bossBodyTransformData_ && isBossModelVisible_) {
+    if (!isTitleMode_ && bossBodyTransformData_ && isBossModelVisible_ && !hasHitBoss_) {
         // 歩行速度が0より大きい時のみ、8本の足のステップに連動した真ん中の胴体の動き（上下バウンス・左右重心揺れ・前後うねり・ロール/ピッチ/ヨー）を計算
         float bodyBounce = 0.0f;
         float bodyRoll = 0.0f;
