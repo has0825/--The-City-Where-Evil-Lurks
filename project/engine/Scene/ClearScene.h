@@ -62,5 +62,22 @@ private:
     std::unique_ptr<Model> playerModel_;
     Microsoft::WRL::ComPtr<ID3D12Resource> playerTransformResource_;
     TransformationMatrix* playerTransformData_ = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> playerLightResource_;
+    DirectionalLight* playerLightData_ = nullptr;
+    std::string playerEnvMapName_ = "test.dds";
     float time_ = 0.0f;
+
+    // 花火爆発のプレイヤーへの照り返し演出用
+    Vector3 fireworkFlashPos_ = { 0.0f, 0.0f, 20.0f };
+    Vector3 fireworkFlashColor_ = { 1.0f, 0.8f, 0.4f };
+    float fireworkFlashTimer_ = 0.0f;
+
+    // 夜空背景用定数バッファ
+    struct NightSkyCB {
+        float time;
+        float aspectRatio;
+        float padding[2];
+    };
+    Microsoft::WRL::ComPtr<ID3D12Resource> nightSkyResource_;
+    NightSkyCB* nightSkyData_ = nullptr;
 };

@@ -201,9 +201,33 @@ void GamePlayScene::Initialize() {
 
     directionalLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
     directionalLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData_));
-    directionalLightData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    directionalLightData_->direction = Normalize({ 0.0f, -1.0f, 1.0f });
-    directionalLightData_->intensity = 1.0f;
+    // 街灯のある夜ステージ：常に程よい月明かり＋街灯の明かりで照らす（プレイヤー通過で急に明るくならないようにスポットライトは無効化）
+    directionalLightData_->color = { 0.44f, 0.54f, 0.88f, 1.0f };
+    directionalLightData_->direction = Normalize({ -0.35f, -0.85f, 0.45f });
+    directionalLightData_->intensity = 0.34f;
+    directionalLightData_->enableSpotLight = 0;
+    directionalLightData_->spotLightPos = { 0.0f, 5.0f, 0.0f };
+    directionalLightData_->spotLightDir = Normalize({ 0.0f, -0.22f, 1.0f });
+    directionalLightData_->spotLightRange = 160.0f;
+    directionalLightData_->spotLightCosAngle = std::cos(28.0f * 3.14159265f / 180.0f);
+    directionalLightData_->spotLightColor = { 0.90f, 0.95f, 1.00f };
+    directionalLightData_->spotLightIntensity = 0.0f;
+    directionalLightData_->enableNightEmissive = 0;
+    directionalLightData_->streetLampIntensity = 2.2f;
+    directionalLightData_->streetLampRange = 85.0f;
+    directionalLightData_->numStreetLamps = 0;
+    directionalLightData_->streetLampColor = { 1.0f, 0.72f, 0.36f };
+
+    // ビル用（窓の部屋明かり発光）＆ 街灯用（電球発光）ライトバッファ
+    buildingLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
+    buildingLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&buildingLightData_));
+    *buildingLightData_ = *directionalLightData_;
+    buildingLightData_->enableNightEmissive = 1;
+
+    streetLampLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
+    streetLampLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&streetLampLightData_));
+    *streetLampLightData_ = *directionalLightData_;
+    streetLampLightData_->enableNightEmissive = 2;
 
     cameraResource_ = CreateBufferResource(device, sizeof(CameraDataCB));
     cameraResource_->Map(0, nullptr, reinterpret_cast<void**>(&cameraDataCB_));
@@ -450,6 +474,10 @@ void GamePlayScene::Initialize() {
 
     // ── ビル(Building)の初期化とバッファ生成 ──
     buildingModel_ = std::unique_ptr<Model>(Model::LoadGLTF("Resources/building/building.obj", device));
+    if (buildingModel_) {
+        // ビルの壁面が環境マップでテカテカ反射するのを防ぐ
+        buildingModel_->SetEnvironmentCoefficient(0.0f);
+    }
     TextureManager::GetInstance()->LoadTexture("building/buillding_uv.png");
 
     // ビル用定数バッファの一括生成（30,000個のリソース割り当てを1回にまとめて爆速化）
@@ -502,8 +530,70 @@ void GamePlayScene::Initialize() {
 
     // ── 床(Plane)の初期化とバッファ生成（4,000個のリソース割り当てを1回にまとめて爆速化）──
     floorModel_ = std::unique_ptr<Model>(Model::LoadGLTF("Resources/plane.obj", device));
+    if (floorModel_) {
+        floorModel_->SetEnvironmentCoefficient(0.0f);
+    }
     TextureManager::GetInstance()->LoadTexture("douro.jpg");
     TextureManager::GetInstance()->LoadTexture("juziro.jpg");
+    TextureManager::GetInstance()->LoadTexture("sidewalk.jpg");
+    TextureManager::GetInstance()->LoadTexture("dds/qwantani_night_puresky_2k.dds");
+
+    // ── 街灯 (Street Lamp) モデルのロードとバッファ生成 ──
+    streetLampModel_ = std::unique_ptr<Model>(Model::LoadGLTF("Resources/street lamp/street_lamp.obj", device));
+    if (streetLampModel_) {
+        streetLampModel_->SetEnvironmentCoefficient(0.0f);
+    }
+    TextureManager::GetInstance()->LoadTexture("street lamp/street_lamp_basecolor.jpg");
+
+    // 遠距離用・超軽量街灯LODモデル（ポール＋発光ランタン頭部の48頂点メッシュ）
+    {
+        ModelData lodData;
+        auto addBox = [&](float minX, float maxX, float minY, float maxY, float minZ, float maxZ, float u, float v) {
+            uint32_t base = static_cast<uint32_t>(lodData.vertices.size());
+            // 6面 x 4頂点
+            Vector3 p[8] = {
+                {minX, minY, minZ}, {maxX, minY, minZ}, {maxX, maxY, minZ}, {minX, maxY, minZ},
+                {minX, minY, maxZ}, {maxX, minY, maxZ}, {maxX, maxY, maxZ}, {minX, maxY, maxZ}
+            };
+            int faces[6][4] = {
+                {0,3,2,1}, {5,6,7,4}, {4,7,3,0}, {1,2,6,5}, {3,7,6,2}, {4,0,1,5}
+            };
+            Vector3 normals[6] = {
+                {0,0,-1}, {0,0,1}, {-1,0,0}, {1,0,0}, {0,1,0}, {0,-1,0}
+            };
+            for (int f = 0; f < 6; ++f) {
+                for (int k = 0; k < 4; ++k) {
+                    VertexData vd{};
+                    Vector3 vp = p[faces[f][k]];
+                    vd.position = { vp.x, vp.y, vp.z, 1.0f };
+                    vd.texcoord = { u, v };
+                    vd.normal = normals[f];
+                    lodData.vertices.push_back(vd);
+                }
+                uint32_t fb = base + f * 4;
+                lodData.indices.push_back(fb + 0); lodData.indices.push_back(fb + 1); lodData.indices.push_back(fb + 2);
+                lodData.indices.push_back(fb + 0); lodData.indices.push_back(fb + 2); lodData.indices.push_back(fb + 3);
+            }
+        };
+        // ポール部分 (暗い茶色領域 UV=(0.2, 0.5))
+        addBox(-0.018f, 0.018f, 0.0f, 0.78f, -0.018f, 0.018f, 0.20f, 0.50f);
+        // ランタン電球部分 (明るいクリーム色領域 UV=(0.85, 0.15))
+        addBox(-0.050f, 0.050f, 0.78f, 1.00f, -0.050f, 0.050f, 0.85f, 0.15f);
+
+        streetLampLodModel_ = std::make_unique<Model>();
+        streetLampLodModel_->Initialize(lodData, device);
+        streetLampLodModel_->SetEnvironmentCoefficient(0.0f);
+    }
+
+    streetLampTransformBufferResource_ = CreateBufferResource(device, cbAlignment * kMaxStreetLamps);
+    uint8_t* lampMappedPtr = nullptr;
+    streetLampTransformBufferResource_->Map(0, nullptr, reinterpret_cast<void**>(&lampMappedPtr));
+    for (int i = 0; i < kMaxStreetLamps; ++i) {
+        streetLampTransformData_[i] = reinterpret_cast<TransformationMatrix*>(lampMappedPtr + i * cbAlignment);
+        streetLampTransformData_[i]->WVP = MakeIdentity4x4();
+        streetLampTransformData_[i]->World = MakeIdentity4x4();
+        streetLampTransformData_[i]->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    }
 
     floorTransformBufferResource_ = CreateBufferResource(device, cbAlignment * kNumFloors);
     uint8_t* floorMappedPtr = nullptr;
@@ -1451,6 +1541,96 @@ void GamePlayScene::Initialize() {
             // ルートの近くにあるビル、または直進延長上のビルは isNearCourseColumn = true （高詳細描画対象）
             // 元の isNearCourseColumn（曲がり角延長上の高密度補テンフラグ等）を保持しつつ判定
             buildings_[i].isNearCourseColumn = buildings_[i].isNearCourseColumn || (minSqDist <= kNearRouteDistSq);
+        }
+    }
+
+    // ── ビルが建っている床タイルは車道ではなく歩行者通路タイル(sidewalk.jpg)に変更 ──
+    // ※ プレイヤーが通るメイン道路（レール付近）や十字路は絶対に道路のまま保護する
+    for (int f = 0; f < numLoadedFloors_; ++f) {
+        if (floorPositions_[f].y < -5000.0f) continue;
+        if (floorIsJuziro_[f] == 1) continue; // 十字路は維持
+
+        // プレイヤーの進行ルート上の道路タイルかチェック
+        bool isOnPlayerRoute = false;
+        if (!waypointDistances_.empty() && waypointDistances_.back() > 0.0f) {
+            float totalDist = waypointDistances_.back();
+            for (float s = 0.0f; s <= totalDist; s += 20.0f) {
+                Vector3 railPos = GetRailPosition(s);
+                float rdx = floorPositions_[f].x - railPos.x;
+                float rdz = floorPositions_[f].z - railPos.z;
+                if (rdx * rdx + rdz * rdz < 55.0f * 55.0f) {
+                    isOnPlayerRoute = true;
+                    break;
+                }
+            }
+        }
+        if (isOnPlayerRoute) continue;
+
+        float ry = floorRotations_[f].y;
+        float fwdX = std::sin(ry);
+        float fwdZ = std::cos(ry);
+        float rightX = std::cos(ry);
+        float rightZ = -std::sin(ry);
+
+        for (size_t b = 0; b < buildings_.size(); ++b) {
+            if (buildings_[b].floors <= 0) continue;
+            float dx = buildings_[b].position.x - floorPositions_[f].x;
+            float dz = buildings_[b].position.z - floorPositions_[f].z;
+            if (dx * dx + dz * dz > 75.0f * 75.0f) continue;
+
+            float dLat = std::abs(dx * rightX + dz * rightZ);
+            float dFwd = std::abs(dx * fwdX + dz * fwdZ);
+            // タイルの車道上に実際にビルが建っている場合のみ歩行者通路タイルに変更
+            if (dLat < 26.0f && dFwd < 48.0f) {
+                floorIsJuziro_[f] = 3; // 3: 歩行者通路タイル (sidewalk.jpg)
+                break;
+            }
+        }
+    }
+
+    // ── 街灯 (Street Lamp) を全ステージ（Phase2以降も含む）の道路（十字路・ビル敷地以外）の歩行者通路側（側辺）に等間隔配置 ──
+    streetLamps_.clear();
+    for (int i = 0; i < numLoadedFloors_; ++i) {
+        if (floorPositions_[i].y < -5000.0f) continue;
+        // 十字路(1)とビル敷地(3)はスキップし、道路(0:縦道, 2:横道)のみに配置
+        if (floorIsJuziro_[i] != 0 && floorIsJuziro_[i] != 2) continue;
+        if (static_cast<int>(streetLamps_.size()) >= kMaxStreetLamps) break;
+
+        float ry = floorRotations_[i].y;
+        float fwdX = std::sin(ry);
+        float fwdZ = std::cos(ry);
+        float rightX = std::cos(ry);
+        float rightZ = -std::sin(ry);
+
+        // 1タイルにつき中央(0.0f)の左右歩行者通路側(側辺)に1本ずつ（計2個）配置
+        // 道路テクスチャ(douro.jpg)の歩行者通路側(側辺): 左歩道 -25.5m / 右歩道 +22.5m
+        const float sideOffsets[2] = { -25.5f, 22.5f };
+
+        for (int si = 0; si < 2; ++si) {
+            if (static_cast<int>(streetLamps_.size()) >= kMaxStreetLamps) break;
+            Vector3 pos = {
+                floorPositions_[i].x + rightX * sideOffsets[si],
+                kFloorY,
+                floorPositions_[i].z + rightZ * sideOffsets[si]
+            };
+
+            // ビルと重ならないかチェック
+            bool overlapsBuilding = false;
+            for (size_t b = 0; b < buildings_.size(); ++b) {
+                if (buildings_[b].floors <= 0) continue;
+                float bdx = std::abs(buildings_[b].position.x - pos.x);
+                float bdz = std::abs(buildings_[b].position.z - pos.z);
+                if (bdx < 14.5f && bdz < 14.5f) {
+                    overlapsBuilding = true;
+                    break;
+                }
+            }
+            if (overlapsBuilding) continue;
+
+            StreetLampInstance lamp;
+            lamp.position = pos;
+            lamp.lightPos = { pos.x, kFloorY + 12.5f, pos.z };
+            streetLamps_.push_back(lamp);
         }
     }
 
@@ -5359,6 +5539,57 @@ void GamePlayScene::Update() {
         if (cameraDataCB_) {
             cameraDataCB_->worldPosition = camTrans.translate;
         }
+
+        // 夜ステージ用：自機前方（カメラ基準の前方斜め下）を照らすヘッドライトを更新
+        if (directionalLightData_) {
+            Vector3 railPos = GetRailPosition(fighterWorldZ_);
+            Vector3 railNext = GetRailPosition(fighterWorldZ_ + 10.0f);
+            Vector3 fwd = Normalize({ railNext.x - railPos.x, railNext.y - railPos.y, railNext.z - railPos.z });
+            directionalLightData_->spotLightPos = {
+                railPos.x + fwd.x * 6.0f,
+                railPos.y + 4.0f,
+                railPos.z + fwd.z * 6.0f
+            };
+            directionalLightData_->spotLightDir = Normalize({ fwd.x, fwd.y - 0.24f, fwd.z });
+
+            // カメラ/自機周辺の最も近い街灯16灯をピックアップしてポイントライトに設定
+            if (!streetLamps_.empty()) {
+                struct LampDist {
+                    int idx;
+                    float distSq;
+                };
+                std::vector<LampDist> nearLamps;
+                nearLamps.reserve(64);
+                for (int li = 0; li < static_cast<int>(streetLamps_.size()); ++li) {
+                    float dx = streetLamps_[li].lightPos.x - railPos.x;
+                    float dz = streetLamps_[li].lightPos.z - railPos.z;
+                    float d2 = dx * dx + dz * dz;
+                    if (d2 < 360.0f * 360.0f) {
+                        nearLamps.push_back({ li, d2 });
+                    }
+                }
+                std::sort(nearLamps.begin(), nearLamps.end(), [](const LampDist& a, const LampDist& b) {
+                    return a.distSq < b.distSq;
+                });
+                uint32_t count = static_cast<uint32_t>((std::min)(static_cast<size_t>(8), nearLamps.size()));
+                directionalLightData_->numStreetLamps = count;
+                for (uint32_t k = 0; k < count; ++k) {
+                    const Vector3& lp = streetLamps_[nearLamps[k].idx].lightPos;
+                    directionalLightData_->streetLampPositions[k] = { lp.x, lp.y, lp.z, 1.0f };
+                }
+            } else {
+                directionalLightData_->numStreetLamps = 0;
+            }
+
+            if (buildingLightData_) {
+                *buildingLightData_ = *directionalLightData_;
+                buildingLightData_->enableNightEmissive = 1;
+            }
+            if (streetLampLightData_) {
+                *streetLampLightData_ = *directionalLightData_;
+                streetLampLightData_->enableNightEmissive = 2;
+            }
+        }
     }
 
     // simpleSkinのスケルトンアニメーション更新
@@ -5627,6 +5858,16 @@ void GamePlayScene::Update() {
                 introBossPos = GetBossPosition(0.0f, 0.0f);
             }
 
+            // カメラ前方向ベクトル（水平2D）をビュー行列から抽出して視錐台カリングに使用
+            const Matrix4x4& camViewMat = camera_->GetViewMatrix();
+            float camFwdX = camViewMat.m[0][2];
+            float camFwdZ = camViewMat.m[2][2];
+            float camFwdLen = std::sqrt(camFwdX * camFwdX + camFwdZ * camFwdZ);
+            if (camFwdLen > 0.0001f) {
+                camFwdX /= camFwdLen;
+                camFwdZ /= camFwdLen;
+            }
+
             for (size_t i = 0; i < buildings_.size(); ++i) {
                 buildings_[i].cbIndexStart = -1;
                 buildings_[i].cbCount = 0;
@@ -5642,9 +5883,23 @@ void GamePlayScene::Update() {
                 float dx = buildings_[i].position.x - camX;
                 float distSq = dx * dx + dz * dz;
 
-                // 2D全方位の距離カリング（ルートが横方向や逆方向に曲がっても視界内のビルが消えないようにする）
+                // 2D距離カリング（視界限界 kBuildingCullFarDist まで普通に描画）
                 if (distSq > kBuildingCullFarDist * kBuildingCullFarDist) {
                     continue;
+                }
+
+                // カメラ視錐台カリング（画面に映っていない後ろ・左右のビルのみ非描画）
+                if (!isBossIntro && !isTitleMode_ && camFwdLen > 0.0001f) {
+                    float fwdDot = dx * camFwdX + dz * camFwdZ;
+                    if (fwdDot < -65.0f) {
+                        continue; // カメラ後方のビルは非描画
+                    }
+                    if (distSq > 160.0f * 160.0f) {
+                        float dist = std::sqrt(distSq);
+                        if ((fwdDot / dist) < 0.50f) {
+                            continue; // 視野角外の左右ビルは非描画
+                        }
+                    }
                 }
 
                 // ── 破壊時およびボス登場カメラ演出中のビル透過率（alpha）を算出（詳細描画・統合描画の両方に適用） ──
@@ -5717,7 +5972,7 @@ void GamePlayScene::Update() {
                     }
                 }
 
-                // プレイヤーが通るルート近傍および直進延長上のビル(isNearCourseColumn)は視界限界(kBuildingCullFarDist)まで常に詳細描画（荒くしない）
+                // プレイヤーが通るルート近傍および直進延長上のビル(isNearCourseColumn)は普通に詳細描画
                 bool isDetailView = buildings_[i].isNearCourseColumn ||
                                     buildings_[i].isDestroyed ||
                                     (distSq <= 120.0f * 120.0f);
@@ -5839,6 +6094,21 @@ void GamePlayScene::Update() {
 
                 if (floorTransformData_[i]) {
                     floorTransformData_[i]->WVP = Multiply(floorWorldMatrices_[i], viewProjectionMatrix);
+                }
+            }
+
+            // 街灯 (Street Lamp) の WVP 行列更新
+            if (streetLampModel_ && !streetLamps_.empty()) {
+                const Matrix4x4 lampScale = Matrix4x4MakeScaleMatrix({ 14.0f, 14.0f, 14.0f });
+                for (int i = 0; i < static_cast<int>(streetLamps_.size()) && i < kMaxStreetLamps; ++i) {
+                    float dx = streetLamps_[i].position.x - camX;
+                    float dz = streetLamps_[i].position.z - camZ;
+                    if (dx * dx + dz * dz > kFloorFarDistSq) continue;
+                    if (streetLampTransformData_[i]) {
+                        Matrix4x4 world = Multiply(lampScale, MakeTranslateMatrix(streetLamps_[i].position));
+                        streetLampTransformData_[i]->World = world;
+                        streetLampTransformData_[i]->WVP = Multiply(world, viewProjectionMatrix);
+                    }
                 }
             }
         }
@@ -6228,13 +6498,16 @@ void GamePlayScene::Draw() {
 
                 D3D12_GPU_DESCRIPTOR_HANDLE douroSrv = TextureManager::GetInstance()->GetSrvHandleGPU("douro.jpg");
                 D3D12_GPU_DESCRIPTOR_HANDLE juziroSrv = TextureManager::GetInstance()->GetSrvHandleGPU("juziro.jpg");
-                D3D12_GPU_DESCRIPTOR_HANDLE testSrv = TextureManager::GetInstance()->GetSrvHandleGPU("test.dds");
-                D3D12_GPU_DESCRIPTOR_HANDLE whiteSrv = TextureManager::GetInstance()->GetSrvHandleGPU("human/white.png");
+                D3D12_GPU_DESCRIPTOR_HANDLE sidewalkSrv = TextureManager::GetInstance()->GetSrvHandleGPU("sidewalk.jpg");
+                std::string nightEnvName = TextureManager::GetInstance()->GetMetaData("dds/qwantani_night_puresky_2k.dds").IsCubemap()
+                    ? "dds/qwantani_night_puresky_2k.dds"
+                    : "test.dds";
+                D3D12_GPU_DESCRIPTOR_HANDLE testSrv = TextureManager::GetInstance()->GetSrvHandleGPU(nightEnvName);
 
-                // 0. 広域地面ベース（上空からステージを見下ろした際に道路外の隙間が見えないようにダークアスファルト色で敷く）
+                // 0. 広域地面ベース（道路の歩行者通路側と同じ色のタイル色で敷く）
                 if (groundBaseTransformResource_) {
-                    floorModel_->SetColor({ 0.05f, 0.05f, 0.07f, 1.0f });
-                    floorModel_->PrepareDraw(commandList, whiteSrv, testSrv);
+                    floorModel_->SetColor({ 0.42f, 0.41f, 0.38f, 1.0f });
+                    floorModel_->PrepareDraw(commandList, sidewalkSrv, testSrv);
                     commandList->SetGraphicsRootConstantBufferView(1, groundBaseTransformResource_->GetGPUVirtualAddress());
                     floorModel_->DrawPrepared(commandList);
                     floorModel_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
@@ -6252,7 +6525,7 @@ void GamePlayScene::Draw() {
                 // 1. 通常道路 (douro.jpg)
                 floorModel_->PrepareDraw(commandList, douroSrv, testSrv);
                 for (int i = 0; i < numLoadedFloors_; ++i) {
-                    if (floorIsJuziro_[i] == 1) continue;
+                    if (floorIsJuziro_[i] == 1 || floorIsJuziro_[i] == 3) continue;
                     if (floorPositions_[i].y < -5000.0f) continue;
                     float dx = floorPositions_[i].x - camX;
                     float dz = floorPositions_[i].z - camZ;
@@ -6276,6 +6549,22 @@ void GamePlayScene::Draw() {
 
                     D3D12_GPU_VIRTUAL_ADDRESS cbAddr = floorTransformBufferResource_ ? 
                         (floorTransformBufferResource_->GetGPUVirtualAddress() + i * 256) : 
+                        floorTransformResources_[i]->GetGPUVirtualAddress();
+                    commandList->SetGraphicsRootConstantBufferView(1, cbAddr);
+                    floorModel_->DrawPrepared(commandList);
+                }
+
+                // 3. ビル敷地・歩行者通路タイル (sidewalk.jpg)
+                floorModel_->PrepareDraw(commandList, sidewalkSrv, testSrv);
+                for (int i = 0; i < numLoadedFloors_; ++i) {
+                    if (floorIsJuziro_[i] != 3) continue;
+                    if (floorPositions_[i].y < -5000.0f) continue;
+                    float dx = floorPositions_[i].x - camX;
+                    float dz = floorPositions_[i].z - camZ;
+                    if (dx * dx + dz * dz > kFloorFarDistSq) continue;
+
+                    D3D12_GPU_VIRTUAL_ADDRESS cbAddr = floorTransformBufferResource_ ?
+                        (floorTransformBufferResource_->GetGPUVirtualAddress() + i * 256) :
                         floorTransformResources_[i]->GetGPUVirtualAddress();
                     commandList->SetGraphicsRootConstantBufferView(1, cbAddr);
                     floorModel_->DrawPrepared(commandList);
@@ -6308,11 +6597,18 @@ void GamePlayScene::Draw() {
 
             // ビル(Building)描画（距離カリング & 1棟1ドローコール統合により超軽量化）
             if (buildingModel_ && !isIntroMapPhase) {
-                if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
+                if (buildingLightResource_) {
+                    commandList->SetGraphicsRootConstantBufferView(4, buildingLightResource_->GetGPUVirtualAddress());
+                } else if (directionalLightResource_) {
+                    commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
+                }
                 if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
 
                 D3D12_GPU_DESCRIPTOR_HANDLE bldgSrv = TextureManager::GetInstance()->GetSrvHandleGPU("building/buillding_uv.png");
-                D3D12_GPU_DESCRIPTOR_HANDLE testSrv = TextureManager::GetInstance()->GetSrvHandleGPU("test.dds");
+                std::string bldgEnvName = TextureManager::GetInstance()->GetMetaData("dds/qwantani_night_puresky_2k.dds").IsCubemap()
+                    ? "dds/qwantani_night_puresky_2k.dds"
+                    : "test.dds";
+                D3D12_GPU_DESCRIPTOR_HANDLE testSrv = TextureManager::GetInstance()->GetSrvHandleGPU(bldgEnvName);
                 buildingModel_->PrepareDraw(commandList, bldgSrv, testSrv);
 
                 for (size_t i = 0; i < buildings_.size(); ++i) {
@@ -6327,6 +6623,75 @@ void GamePlayScene::Draw() {
                         commandList->SetGraphicsRootConstantBufferView(1, bldgCbAddr);
                         buildingModel_->DrawPrepared(commandList);
                     }
+                }
+            }
+
+            // 街灯(Street Lamp)描画（画面に映っているものは遠方1400mまでLODで途切れず描画、画面外のみカリング）
+            if (streetLampModel_ && !streetLamps_.empty() && !isIntroMapPhase) {
+                if (streetLampLightResource_) {
+                    commandList->SetGraphicsRootConstantBufferView(4, streetLampLightResource_->GetGPUVirtualAddress());
+                } else if (directionalLightResource_) {
+                    commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
+                }
+                if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
+
+                D3D12_GPU_DESCRIPTOR_HANDLE lampSrv = TextureManager::GetInstance()->GetSrvHandleGPU("street lamp/street_lamp_basecolor.jpg");
+                D3D12_GPU_DESCRIPTOR_HANDLE envSrv = TextureManager::GetInstance()->GetSrvHandleGPU("test.dds");
+
+                Vector3 camPosForLamp = camera_->GetTransform().translate;
+                const Matrix4x4& lampCamView = camera_->GetViewMatrix();
+                float lampFwdX = lampCamView.m[0][2];
+                float lampFwdZ = lampCamView.m[2][2];
+                float lampFwdLen = std::sqrt(lampFwdX * lampFwdX + lampFwdZ * lampFwdZ);
+                if (lampFwdLen > 0.0001f) {
+                    lampFwdX /= lampFwdLen;
+                    lampFwdZ /= lampFwdLen;
+                }
+
+                constexpr float kLampNearDistSq = 240.0f * 240.0f;
+                constexpr float kLampFarDistSq = 1400.0f * 1400.0f;
+
+                // 1. 近距離（240m以内）の高精細街灯モデル
+                streetLampModel_->PrepareDraw(commandList, lampSrv, envSrv);
+                for (int i = 0; i < static_cast<int>(streetLamps_.size()) && i < kMaxStreetLamps; ++i) {
+                    float dx = streetLamps_[i].position.x - camPosForLamp.x;
+                    float dz = streetLamps_[i].position.z - camPosForLamp.z;
+                    float d2 = dx * dx + dz * dz;
+                    if (d2 > kLampNearDistSq) continue;
+                    if (lampFwdLen > 0.0001f) {
+                        float fwdDot = dx * lampFwdX + dz * lampFwdZ;
+                        if (fwdDot < -35.0f) continue;
+                        if (d2 > 100.0f * 100.0f && (fwdDot / std::sqrt(d2)) < 0.50f) continue;
+                    }
+
+                    D3D12_GPU_VIRTUAL_ADDRESS lampCbAddr = streetLampTransformBufferResource_->GetGPUVirtualAddress() + i * 256;
+                    commandList->SetGraphicsRootConstantBufferView(1, lampCbAddr);
+                    streetLampModel_->DrawPrepared(commandList);
+                }
+
+                // 2. 遠距離（240m〜1400m）の超軽量街灯LODモデル（いきなり現れるのを防止）
+                if (streetLampLodModel_) {
+                    streetLampLodModel_->PrepareDraw(commandList, lampSrv, envSrv);
+                    for (int i = 0; i < static_cast<int>(streetLamps_.size()) && i < kMaxStreetLamps; ++i) {
+                        float dx = streetLamps_[i].position.x - camPosForLamp.x;
+                        float dz = streetLamps_[i].position.z - camPosForLamp.z;
+                        float d2 = dx * dx + dz * dz;
+                        if (d2 <= kLampNearDistSq || d2 > kLampFarDistSq) continue;
+                        if (lampFwdLen > 0.0001f) {
+                            float fwdDot = dx * lampFwdX + dz * lampFwdZ;
+                            if (fwdDot < -35.0f) continue;
+                            if ((fwdDot / std::sqrt(d2)) < 0.50f) continue;
+                        }
+
+                        D3D12_GPU_VIRTUAL_ADDRESS lampCbAddr = streetLampTransformBufferResource_->GetGPUVirtualAddress() + i * 256;
+                        commandList->SetGraphicsRootConstantBufferView(1, lampCbAddr);
+                        streetLampLodModel_->DrawPrepared(commandList);
+                    }
+                }
+
+                // 以降の描画用に標準ライトへ戻す
+                if (directionalLightResource_) {
+                    commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
                 }
             }
 

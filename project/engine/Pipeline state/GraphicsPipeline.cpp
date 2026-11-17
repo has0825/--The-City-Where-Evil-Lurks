@@ -192,6 +192,74 @@ void GraphicsPipeline::Initialize(ID3D12Device* device) {
 		assert(SUCCEEDED(hr));
 	}
 
+	// --- 花火パーティクル専用（ソフトグロー加算合成）パイプラインステートの作成 ---
+	{
+		Microsoft::WRL::ComPtr<IDxcBlob> fwPSBlob = CompileShader(L"FireworkParticle.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get());
+		assert(fwPSBlob != nullptr);
+
+		D3D12_BLEND_DESC fwBlendDesc{};
+		fwBlendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+		fwBlendDesc.RenderTarget[0].BlendEnable = TRUE;
+		fwBlendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+		fwBlendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+		fwBlendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ONE;
+		fwBlendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		fwBlendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+		fwBlendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC fwPsoDesc{};
+		fwPsoDesc.pRootSignature = rootSignature_.Get();
+		fwPsoDesc.InputLayout = inputLayoutDesc;
+		fwPsoDesc.VS = { vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize() };
+		fwPsoDesc.PS = { fwPSBlob->GetBufferPointer(), fwPSBlob->GetBufferSize() };
+		fwPsoDesc.BlendState = fwBlendDesc;
+		fwPsoDesc.RasterizerState = rasterizerDesc;
+		fwPsoDesc.DepthStencilState = depthStencilDesc;
+		fwPsoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		fwPsoDesc.NumRenderTargets = 1;
+		fwPsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+		fwPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		fwPsoDesc.SampleDesc.Count = 1;
+		fwPsoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+
+		hr = device->CreateGraphicsPipelineState(&fwPsoDesc, IID_PPV_ARGS(&fireworkParticlePipelineState_));
+		assert(SUCCEEDED(hr));
+	}
+
+	// --- 雲・スモークパーティクル専用（通常アルファブレンド）パイプラインステートの作成 ---
+	{
+		Microsoft::WRL::ComPtr<IDxcBlob> smokePSBlob = CompileShader(L"SmokeParticle.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get());
+		assert(smokePSBlob != nullptr);
+
+		D3D12_BLEND_DESC smokeBlendDesc{};
+		smokeBlendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+		smokeBlendDesc.RenderTarget[0].BlendEnable = TRUE;
+		smokeBlendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+		smokeBlendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+		smokeBlendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+		smokeBlendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		smokeBlendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+		smokeBlendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC smokePsoDesc{};
+		smokePsoDesc.pRootSignature = rootSignature_.Get();
+		smokePsoDesc.InputLayout = inputLayoutDesc;
+		smokePsoDesc.VS = { vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize() };
+		smokePsoDesc.PS = { smokePSBlob->GetBufferPointer(), smokePSBlob->GetBufferSize() };
+		smokePsoDesc.BlendState = smokeBlendDesc;
+		smokePsoDesc.RasterizerState = rasterizerDesc;
+		smokePsoDesc.DepthStencilState = depthStencilDesc;
+		smokePsoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		smokePsoDesc.NumRenderTargets = 1;
+		smokePsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+		smokePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		smokePsoDesc.SampleDesc.Count = 1;
+		smokePsoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+
+		hr = device->CreateGraphicsPipelineState(&smokePsoDesc, IID_PPV_ARGS(&smokeParticlePipelineState_));
+		assert(SUCCEEDED(hr));
+	}
+
 	// --- Skybox用パイプラインステートの作成 ---
 	Microsoft::WRL::ComPtr<IDxcBlob> skyboxVSBlob = CompileShader(L"Skybox.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get());
 	assert(skyboxVSBlob != nullptr);
@@ -1106,6 +1174,65 @@ void GraphicsPipeline::Initialize(ID3D12Device* device) {
 	spritePsoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
 
 	hr = device->CreateGraphicsPipelineState(&spritePsoDesc, IID_PPV_ARGS(&spritePipelineState_));
+	assert(SUCCEEDED(hr));
+
+	// ====================================================================
+	// 夜空背景（NightSky）用のルートシグネチャ＆パイプライン
+	// ====================================================================
+	D3D12_ROOT_PARAMETER nightSkyParams[1] = {};
+	nightSkyParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	nightSkyParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	nightSkyParams[0].Descriptor.ShaderRegister = 0;
+
+	D3D12_ROOT_SIGNATURE_DESC nightSkyRootDesc{};
+	nightSkyRootDesc.pParameters = nightSkyParams;
+	nightSkyRootDesc.NumParameters = _countof(nightSkyParams);
+	nightSkyRootDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+	Microsoft::WRL::ComPtr<ID3DBlob> nightSkySigBlob;
+	Microsoft::WRL::ComPtr<ID3DBlob> nightSkyErrBlob;
+	hr = D3D12SerializeRootSignature(&nightSkyRootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &nightSkySigBlob, &nightSkyErrBlob);
+	if (FAILED(hr)) {
+		if (nightSkyErrBlob) Log(logStream_, reinterpret_cast<char*>(nightSkyErrBlob->GetBufferPointer()));
+		assert(false);
+	}
+	hr = device->CreateRootSignature(0, nightSkySigBlob->GetBufferPointer(), nightSkySigBlob->GetBufferSize(), IID_PPV_ARGS(&nightSkyRootSignature_));
+	assert(SUCCEEDED(hr));
+
+	Microsoft::WRL::ComPtr<IDxcBlob> nightSkyVSBlob = CompileShader(L"Fullscreen.VS.hlsl", L"vs_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get());
+	assert(nightSkyVSBlob != nullptr);
+	Microsoft::WRL::ComPtr<IDxcBlob> nightSkyPSBlob = CompileShader(L"NightSky.PS.hlsl", L"ps_6_0", dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get());
+	assert(nightSkyPSBlob != nullptr);
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC nightSkyPsoDesc{};
+	nightSkyPsoDesc.pRootSignature = nightSkyRootSignature_.Get();
+	nightSkyPsoDesc.InputLayout = { nullptr, 0 };
+	nightSkyPsoDesc.VS = { nightSkyVSBlob->GetBufferPointer(), nightSkyVSBlob->GetBufferSize() };
+	nightSkyPsoDesc.PS = { nightSkyPSBlob->GetBufferPointer(), nightSkyPSBlob->GetBufferSize() };
+
+	D3D12_BLEND_DESC nightSkyBlendDesc{};
+	nightSkyBlendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	nightSkyBlendDesc.RenderTarget[0].BlendEnable = FALSE;
+	nightSkyPsoDesc.BlendState = nightSkyBlendDesc;
+
+	D3D12_RASTERIZER_DESC nightSkyRasterizerDesc{};
+	nightSkyRasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
+	nightSkyRasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
+	nightSkyPsoDesc.RasterizerState = nightSkyRasterizerDesc;
+
+	D3D12_DEPTH_STENCIL_DESC nightSkyDepthDesc{};
+	nightSkyDepthDesc.DepthEnable = FALSE;
+	nightSkyDepthDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	nightSkyPsoDesc.DepthStencilState = nightSkyDepthDesc;
+
+	nightSkyPsoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	nightSkyPsoDesc.NumRenderTargets = 1;
+	nightSkyPsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+	nightSkyPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	nightSkyPsoDesc.SampleDesc.Count = 1;
+	nightSkyPsoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+
+	hr = device->CreateGraphicsPipelineState(&nightSkyPsoDesc, IID_PPV_ARGS(&nightSkyPipelineState_));
 	assert(SUCCEEDED(hr));
 }
 

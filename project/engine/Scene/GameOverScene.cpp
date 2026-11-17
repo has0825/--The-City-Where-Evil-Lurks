@@ -99,6 +99,8 @@ void GameOverScene::Initialize() {
     directionalLightData_->spotLightCosAngle = std::cos(15.0f * 3.14159265f / 180.0f); // コーン角度を15度に狭め、円形を明瞭にする
     directionalLightData_->spotLightColor = { 1.0f, 1.0f, 1.0f };
     directionalLightData_->spotLightIntensity = 8.0f; // 強度を上げてスポットライトを強調
+    directionalLightData_->enableNightEmissive = 0;
+    directionalLightData_->numStreetLamps = 0;
 
     cameraResource_ = CreateBufferResource(device, sizeof(CameraDataCB));
     cameraResource_->Map(0, nullptr, reinterpret_cast<void**>(&cameraDataCB_));

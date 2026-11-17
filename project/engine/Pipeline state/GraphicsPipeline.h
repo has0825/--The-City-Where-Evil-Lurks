@@ -38,6 +38,16 @@ public:
     // ★追加：Skydome（天球）専用のゲッター（Zバッファ書き込みなし・最遠面固定シェーダー）
     ID3D12PipelineState* GetSkydomePipelineState() const { return skydomePipelineState_.Get(); }
     ID3D12RootSignature* GetSkydomeRootSignature() const { return skydomeRootSignature_.Get(); }
+
+    // 夜空背景（NightSky）専用のゲッター
+    ID3D12PipelineState* GetNightSkyPipelineState() const { return nightSkyPipelineState_.Get(); }
+    ID3D12RootSignature* GetNightSkyRootSignature() const { return nightSkyRootSignature_.Get(); }
+
+    // 花火パーティクル専用（ソフトグロー加算合成）ゲッター
+    ID3D12PipelineState* GetFireworkParticlePipelineState() const { return fireworkParticlePipelineState_.Get(); }
+
+    // 雲・スモークパーティクル専用（通常アルファブレンド）ゲッター
+    ID3D12PipelineState* GetSmokeParticlePipelineState() const { return smokeParticlePipelineState_.Get(); }
     	ID3D12PipelineState* GetObject3dPipelineState() { return object3dPipelineState_.Get(); }
         ID3D12PipelineState* GetObject3dBlendNormalPipelineState() { return object3dBlendNormalPipelineState_.Get(); }
 	ID3D12RootSignature* GetSkinningRootSignature() { return skinningRootSignature_.Get(); }
@@ -96,6 +106,16 @@ private:
     // ★追加：Skydome（天球）専用パイプラインステート
     Microsoft::WRL::ComPtr<ID3D12PipelineState> skydomePipelineState_;
     Microsoft::WRL::ComPtr<ID3D12RootSignature> skydomeRootSignature_;
+
+    // 夜空背景（NightSky）専用パイプラインステート
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> nightSkyPipelineState_;
+    Microsoft::WRL::ComPtr<ID3D12RootSignature> nightSkyRootSignature_;
+
+    // 花火パーティクル専用パイプラインステート
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> fireworkParticlePipelineState_;
+
+    // 雲・スモークパーティクル専用パイプラインステート
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> smokeParticlePipelineState_;
 
     	Microsoft::WRL::ComPtr<ID3D12RootSignature> skinningRootSignature_;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> skinningPipelineState_;

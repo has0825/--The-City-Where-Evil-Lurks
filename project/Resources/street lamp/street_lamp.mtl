@@ -1,0 +1,11 @@
+newmtl tripo_material_72c2ba01_ea8b_4948_bfa4_d3ca510d772a
+Kd 1.000000000 1.000000000 1.000000000
+d 1.000000000
+illum 2
+map_Kd street_lamp_basecolor.jpg
+Pr 1.000000000
+Pm 1.000000000
+map_Pr street_lamp_roughness.png
+map_Pm street_lamp_metallic.png
+norm street_lamp_normal.png
+

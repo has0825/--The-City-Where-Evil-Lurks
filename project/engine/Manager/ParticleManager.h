@@ -28,6 +28,18 @@ public:
         Matrix4x4 uvTransform;
         float gravity = 0.0f; // 重力加速度の倍率
         int effectType = 0;   // エフェクトの種類識別子
+
+        // 花火用拡張パラメータ
+        float drag = 0.0f;                  // 空気抵抗係数
+        Vector3 startColor = { 1.0f, 1.0f, 1.0f }; // 初期色
+        Vector3 endColor = { 1.0f, 1.0f, 1.0f };   // 終盤色
+        float startScale = 1.0f;            // 初期スケール
+        float endScale = 1.0f;              // 終了スケール
+        float flickerFreq = 0.0f;           // 点滅周波数 (0で無効)
+        float subEmitTimer = 0.0f;          // 残光火の粉の生成タイマー
+        bool emitSubTrail = false;          // 飛行中に残光火の粉を生成するか
+        bool useFireworkCurve = false;      // 花火専用の物理・色カーブを使うか
+        bool isCloudSmoke = false;          // 雲スモーク専用の穏やかなアルファカーブを使うか
         
         enum class Type {
             kBillboard, // ビルボード板ポリゴン
@@ -87,6 +99,9 @@ public:
     void EmitMegaCylinder(const Vector3& emitterPos, const Vector3& color = { 1.0f, 1.0f, 1.0f });
     void EmitFirework(const Vector3& emitterPos, const Vector3& color = { 1.0f, 1.0f, 1.0f });
     void EmitFireworkTrail(const Vector3& emitterPos, const Vector3& color = { 1.0f, 1.0f, 1.0f });
+    void EmitJetAfterburner(const Vector3& emitterPos, const Vector3& backDir);
+    void EmitSkywritingFirework(const Vector3& emitterPos, const Vector3& color);
+    void EmitSkywritingCloud(const Vector3& emitterPos);
     void EmitLSystemLightning(const Vector3& startPos, const Vector3& endPos, int depth, float scale, const Vector3& color);
 
 private:
@@ -104,8 +119,8 @@ private:
     ID3D12Device* device_ = nullptr;
     std::mt19937 randomEngine_;
 
-    // --- 通常/回転パーティクル (最大2000インスタンス) ---
-    const uint32_t kNumInstances = 2000;
+    // --- 通常/回転パーティクル (最大6000インスタンス) ---
+    const uint32_t kNumInstances = 6000;
     Microsoft::WRL::ComPtr<ID3D12Resource> instancingResource_;
     ParticleForGPU* instancingData_ = nullptr;
     D3D12_GPU_DESCRIPTOR_HANDLE instancingSrvHandleGPU_ = {};

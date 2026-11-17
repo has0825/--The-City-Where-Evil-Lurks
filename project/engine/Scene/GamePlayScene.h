@@ -414,6 +414,22 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> groundBaseTransformResource_;
     TransformationMatrix* groundBaseTransformData_ = nullptr;
 
+    // 街灯 (Street Lamp) & 夜ステージ用ライトバッファ
+    static constexpr int kMaxStreetLamps = 8000;
+    struct StreetLampInstance {
+        Vector3 position;
+        Vector3 lightPos;
+    };
+    std::unique_ptr<Model> streetLampModel_;
+    std::unique_ptr<Model> streetLampLodModel_;
+    std::vector<StreetLampInstance> streetLamps_;
+    Microsoft::WRL::ComPtr<ID3D12Resource> streetLampTransformBufferResource_;
+    TransformationMatrix* streetLampTransformData_[kMaxStreetLamps] = { nullptr };
+    Microsoft::WRL::ComPtr<ID3D12Resource> buildingLightResource_;
+    DirectionalLight* buildingLightData_ = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> streetLampLightResource_;
+    DirectionalLight* streetLampLightData_ = nullptr;
+
     // 床・ビル用の追加定数
     static constexpr float kFloorSizeZ = 100.0f;
     static constexpr float kBuildingInterval = 80.0f;

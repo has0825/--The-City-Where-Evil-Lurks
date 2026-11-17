@@ -132,6 +132,36 @@ void ParticleManager::Update(
     float playerSpeed) {
 
     // ── 1. 通常 / 回転パーティクルの更新 ──
+    uint32_t trailSearchCursor = 0;
+    auto spawnFireworkSubTrail = [&](const Vector3& pos, const Vector3& vel, const Vector3& col, float scale, float life) {
+        for (uint32_t step = 0; step < kNumInstances; ++step) {
+            uint32_t idx = (trailSearchCursor + step) % kNumInstances;
+            if (particles_[idx].currentTime < particles_[idx].lifeTime) {
+                continue;
+            }
+            trailSearchCursor = (idx + 1) % kNumInstances;
+            Particle& tp = particles_[idx];
+            tp = {};
+            tp.effectType = 61;
+            tp.type = Particle::Type::kBillboard;
+            tp.position = pos;
+            tp.velocity = vel;
+            tp.scale = { scale, scale, scale };
+            tp.startScale = scale;
+            tp.endScale = scale * 0.1f;
+            tp.startColor = col;
+            tp.endColor = { col.x * 0.85f, col.y * 0.25f, col.z * 0.05f };
+            tp.color = { col.x, col.y, col.z, 0.78f };
+            tp.gravity = 0.08f;
+            tp.drag = 4.5f;
+            tp.lifeTime = life;
+            tp.currentTime = 0.0f;
+            tp.uvTransform = MakeIdentity4x4();
+            tp.useFireworkCurve = true;
+            tp.emitSubTrail = false;
+            return;
+        }
+    };
 
     for (uint32_t i = 0; i < kNumInstances; ++i) {
         bool isStardust = (isFighterMode && i >= kNumInstances / 2);
@@ -200,6 +230,14 @@ void ParticleManager::Update(
             particles_[i].velocity.y -= 18.0f * particles_[i].gravity * deltaTime;
         }
 
+        // 花火用の空気抵抗（指数減衰）
+        if (particles_[i].drag > 0.0f) {
+            float damp = std::exp(-particles_[i].drag * deltaTime);
+            particles_[i].velocity.x *= damp;
+            particles_[i].velocity.y *= damp;
+            particles_[i].velocity.z *= damp;
+        }
+
         // 速度加算
         particles_[i].position.x += particles_[i].velocity.x * deltaTime * speedMultiplier;
         particles_[i].position.y += particles_[i].velocity.y * deltaTime * speedMultiplier;
@@ -208,8 +246,64 @@ void ParticleManager::Update(
         particles_[i].currentTime += deltaTime;
 
         // 透明度の計算 (フェードアウト)
-        float alpha = 1.0f - (particles_[i].currentTime / particles_[i].lifeTime);
-        particles_[i].color.w = (std::max)(alpha, 0.0f);
+        float tNorm = (particles_[i].lifeTime > 0.0f) ? (particles_[i].currentTime / particles_[i].lifeTime) : 1.0f;
+        tNorm = std::clamp(tNorm, 0.0f, 1.0f);
+
+        if (particles_[i].useFireworkCurve) {
+            // 花火専用：スケール補間
+            float curScale = particles_[i].startScale + (particles_[i].endScale - particles_[i].startScale) * tNorm;
+            finalScale = { curScale, curScale, curScale };
+
+            // 色補間（前半は鮮やかな発色、後半はendColorへ落ち着く）
+            float colorT = std::pow(tNorm, 1.3f);
+            particles_[i].color.x = particles_[i].startColor.x + (particles_[i].endColor.x - particles_[i].startColor.x) * colorT;
+            particles_[i].color.y = particles_[i].startColor.y + (particles_[i].endColor.y - particles_[i].startColor.y) * colorT;
+            particles_[i].color.z = particles_[i].startColor.z + (particles_[i].endColor.z - particles_[i].startColor.z) * colorT;
+
+            // 透明度カーブ（雲スモークか花火かで変える）
+            float alpha = 0.0f;
+            if (particles_[i].isCloudSmoke) {
+                float fadeIn = std::clamp(tNorm / 0.04f, 0.0f, 1.0f);
+                float fadeOut = std::pow(1.0f - tNorm, 1.15f);
+                alpha = 0.36f * fadeIn * fadeOut;
+            } else {
+                alpha = std::pow(1.0f - tNorm, 1.35f);
+                if (particles_[i].flickerFreq > 0.0f && tNorm > 0.35f) {
+                    float blink = 0.45f + 0.55f * std::sin(particles_[i].currentTime * particles_[i].flickerFreq + static_cast<float>(i) * 1.7f);
+                    alpha *= blink;
+                }
+            }
+            particles_[i].color.w = (std::max)(alpha, 0.0f);
+
+            // 飛行中の残光火の粉（尾を引く光の筋）を生成
+            if (particles_[i].emitSubTrail && tNorm < 0.72f) {
+                particles_[i].subEmitTimer += deltaTime;
+                if (particles_[i].subEmitTimer >= 0.024f) {
+                    particles_[i].subEmitTimer = 0.0f;
+                    Vector3 trailVel = {
+                        particles_[i].velocity.x * 0.12f,
+                        particles_[i].velocity.y * 0.12f,
+                        particles_[i].velocity.z * 0.12f
+                    };
+                    // 尾の色は星の色と熱い黄金色のブレンド
+                    Vector3 trailCol = {
+                        particles_[i].color.x * 0.65f + 0.35f,
+                        particles_[i].color.y * 0.65f + 0.24f,
+                        particles_[i].color.z * 0.65f + 0.08f
+                    };
+                    spawnFireworkSubTrail(
+                        particles_[i].position,
+                        trailVel,
+                        trailCol,
+                        particles_[i].startScale * 0.68f,
+                        0.28f + 0.18f * (1.0f - tNorm)
+                    );
+                }
+            }
+        } else {
+            float alpha = 1.0f - tNorm;
+            particles_[i].color.w = (std::max)(alpha, 0.0f);
+        }
 
         // 神聖：キラキラ点滅
         if (particles_[i].effectType == 13) {
@@ -1539,51 +1633,351 @@ void ParticleManager::EmitMegaCylinder(const Vector3& emitterPos, const Vector3&
 }
 
 void ParticleManager::EmitFirework(const Vector3& emitterPos, const Vector3& color) {
-    int emitCount = 80;
-    for (uint32_t p = 0; p < kNumInstances && emitCount > 0; ++p) {
-        if (particles_[p].currentTime >= particles_[p].lifeTime) {
-            particles_[p] = MakeNewParticle(60, emitterPos, 0.0f, {0,0,0}, false);
-            
-            std::uniform_real_distribution<float> distTheta(0.0f, 2.0f * 3.14159265f);
-            std::uniform_real_distribution<float> distPhi(0.0f, 3.14159265f);
-            std::uniform_real_distribution<float> distSpeed(5.0f, 15.0f);
-            
-            float theta = distTheta(randomEngine_);
-            float phi = distPhi(randomEngine_);
-            float speed = distSpeed(randomEngine_);
-            
-            particles_[p].velocity = {
-                speed * std::sin(phi) * std::cos(theta),
-                speed * std::cos(phi),
-                speed * std::sin(phi) * std::sin(theta)
+    // ランダムに花火の型を決定 (0: 芯入り菊, 1: 錦冠・しだれ柳, 2: 変色牡丹, 3: 土星型二重輪)
+    std::uniform_int_distribution<int> distStyle(0, 3);
+    int style = distStyle(randomEngine_);
+
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    std::uniform_real_distribution<float> distJitter(-0.08f, 0.08f);
+
+    uint32_t searchIdx = 0;
+    auto allocParticle = [&]() -> Particle* {
+        for (uint32_t step = 0; step < kNumInstances; ++step) {
+            uint32_t idx = (searchIdx + step) % kNumInstances;
+            if (particles_[idx].currentTime >= particles_[idx].lifeTime) {
+                searchIdx = (idx + 1) % kNumInstances;
+                return &particles_[idx];
+            }
+        }
+        return nullptr;
+    };
+
+    // 1. 爆発中心の瞬間フラッシュ光 (ソフトな大爆発の閃光)
+    if (Particle* flash = allocParticle()) {
+        *flash = {};
+        flash->effectType = 62;
+        flash->type = Particle::Type::kBillboard;
+        flash->position = emitterPos;
+        flash->velocity = { 0.0f, 0.0f, 0.0f };
+        flash->startScale = 6.5f;
+        flash->endScale = 0.8f;
+        flash->scale = { 6.5f, 6.5f, 6.5f };
+        flash->startColor = { 1.0f, 0.96f, 0.88f };
+        flash->endColor = color;
+        flash->color = { 1.0f, 0.96f, 0.88f, 0.95f };
+        flash->gravity = 0.0f;
+        flash->drag = 0.0f;
+        flash->lifeTime = 0.22f;
+        flash->currentTime = 0.0f;
+        flash->uvTransform = MakeIdentity4x4();
+        flash->useFireworkCurve = true;
+        flash->emitSubTrail = false;
+    }
+
+    // 芯（内側）の色を計算（親色とコントラストのある色）
+    Vector3 coreColor = {
+        1.0f - color.x * 0.55f,
+        1.0f - color.y * 0.35f,
+        1.0f - color.z * 0.55f
+    };
+
+    const float kGoldenAngle = 2.39996323f;
+    const float kPi = 3.14159265f;
+
+    auto emitSphereLayer = [&](int count, float baseSpeed, float speedSpread, float drag, float gravity,
+                               float lifeMin, float lifeMax, float startSc, float endSc,
+                               const Vector3& colStart, const Vector3& colEnd,
+                               bool trail, float flicker) {
+        for (int n = 0; n < count; ++n) {
+            Particle* p = allocParticle();
+            if (!p) break;
+
+            // フィボナッチ球面分布 + わずかな揺らぎで美しい球状にする
+            float t = (static_cast<float>(n) + 0.5f) / static_cast<float>(count);
+            float y = 1.0f - 2.0f * t;
+            float r = std::sqrt((std::max)(0.0f, 1.0f - y * y));
+            float theta = kGoldenAngle * static_cast<float>(n) + distJitter(randomEngine_);
+
+            Vector3 dir = {
+                r * std::cos(theta) + distJitter(randomEngine_) * 0.5f,
+                y + distJitter(randomEngine_) * 0.5f,
+                r * std::sin(theta) + distJitter(randomEngine_) * 0.5f
             };
-            
-            particles_[p].color = { color.x, color.y, color.z, 1.0f };
-            particles_[p].gravity = 0.2f;
-            particles_[p].lifeTime = 1.0f + std::uniform_real_distribution<float>(0.0f, 0.8f)(randomEngine_);
-            emitCount--;
+            float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+            if (len > 0.0001f) {
+                dir.x /= len; dir.y /= len; dir.z /= len;
+            }
+
+            float spd = baseSpeed + (dist01(randomEngine_) - 0.5f) * speedSpread;
+
+            *p = {};
+            p->effectType = 60;
+            p->type = Particle::Type::kBillboard;
+            p->position = emitterPos;
+            p->velocity = { dir.x * spd, dir.y * spd, dir.z * spd };
+            p->startScale = startSc;
+            p->endScale = endSc;
+            p->scale = { startSc, startSc, startSc };
+            p->startColor = colStart;
+            p->endColor = colEnd;
+            p->color = { colStart.x, colStart.y, colStart.z, 1.0f };
+            p->gravity = gravity;
+            p->drag = drag;
+            p->lifeTime = lifeMin + dist01(randomEngine_) * (lifeMax - lifeMin);
+            p->currentTime = 0.0f;
+            p->uvTransform = MakeIdentity4x4();
+            p->useFireworkCurve = true;
+            p->emitSubTrail = trail;
+            p->subEmitTimer = dist01(randomEngine_) * 0.02f; // 位相をずらして一斉生成を防ぐ
+            p->flickerFreq = flicker;
+        }
+    };
+
+    if (style == 0) {
+        // 芯入り菊：外側の親星が尾を引きながら大きく開き、内側に別の色の芯が咲く
+        Vector3 warmEnd = { color.x * 0.9f, color.y * 0.45f, color.z * 0.25f };
+        emitSphereLayer(155, 22.0f, 2.5f, 2.35f, 0.26f, 1.55f, 2.05f, 0.36f, 0.10f, color, warmEnd, true, 0.0f);
+        emitSphereLayer(68,  12.5f, 1.6f, 2.50f, 0.22f, 1.15f, 1.50f, 0.30f, 0.08f, coreColor, coreColor, false, 0.0f);
+    } else if (style == 1) {
+        // 錦冠（しだれ柳）：黄金〜琥珀の星が長く尾を引いて点滅しながら垂れ下がる
+        Vector3 goldStart = { 1.0f, 0.88f, 0.48f };
+        Vector3 goldEnd   = { 1.0f, 0.42f, 0.10f };
+        emitSphereLayer(145, 20.5f, 3.2f, 2.10f, 0.42f, 2.00f, 2.65f, 0.36f, 0.11f, goldStart, goldEnd, true, 34.0f);
+        emitSphereLayer(48,  10.5f, 1.5f, 2.40f, 0.30f, 1.30f, 1.70f, 0.28f, 0.08f, color, goldEnd, false, 24.0f);
+    } else if (style == 2) {
+        // 変色牡丹：鮮やかな発色から終盤にかけて別色へ変色し、キラキラ瞬く
+        emitSphereLayer(150, 21.0f, 2.2f, 2.45f, 0.24f, 1.45f, 1.85f, 0.40f, 0.10f, color, coreColor, true, 28.0f);
+    } else {
+        // 土星型二重輪：中心球 ＋ 傾いたリング状の星群
+        emitSphereLayer(80, 13.0f, 1.5f, 2.45f, 0.22f, 1.25f, 1.65f, 0.32f, 0.09f, coreColor, coreColor, false, 0.0f);
+
+        float tiltX = (dist01(randomEngine_) - 0.5f) * 0.9f;
+        float tiltZ = (dist01(randomEngine_) - 0.5f) * 0.9f;
+        float cosX = std::cos(tiltX), sinX = std::sin(tiltX);
+        float cosZ = std::cos(tiltZ), sinZ = std::sin(tiltZ);
+
+        int ringCount = 80;
+        for (int n = 0; n < ringCount; ++n) {
+            Particle* p = allocParticle();
+            if (!p) break;
+
+            float ang = (2.0f * kPi * static_cast<float>(n)) / static_cast<float>(ringCount) + distJitter(randomEngine_) * 0.3f;
+            float rx = std::cos(ang);
+            float ry = distJitter(randomEngine_) * 0.25f;
+            float rz = std::sin(ang);
+
+            // X軸・Z軸回転でリングを傾ける
+            float y1 = ry * cosX - rz * sinX;
+            float z1 = ry * sinX + rz * cosX;
+            float x2 = rx * cosZ - y1 * sinZ;
+            float y2 = rx * sinZ + y1 * cosZ;
+            float z2 = z1;
+
+            float spd = 23.5f + (dist01(randomEngine_) - 0.5f) * 1.8f;
+
+            *p = {};
+            p->effectType = 60;
+            p->type = Particle::Type::kBillboard;
+            p->position = emitterPos;
+            p->velocity = { x2 * spd, y2 * spd, z2 * spd };
+            p->startScale = 0.58f;
+            p->endScale = 0.14f;
+            p->scale = { 0.58f, 0.58f, 0.58f };
+            p->startColor = color;
+            p->endColor = { color.x * 0.9f, color.y * 0.5f, color.z * 0.3f };
+            p->color = { color.x, color.y, color.z, 1.0f };
+            p->gravity = 0.25f;
+            p->drag = 2.35f;
+            p->lifeTime = 1.50f + dist01(randomEngine_) * 0.45f;
+            p->currentTime = 0.0f;
+            p->uvTransform = MakeIdentity4x4();
+            p->useFireworkCurve = true;
+            p->emitSubTrail = true;
+            p->subEmitTimer = dist01(randomEngine_) * 0.02f;
         }
     }
-    
-    EmitRing(emitterPos, color);
 }
 
 void ParticleManager::EmitFireworkTrail(const Vector3& emitterPos, const Vector3& color) {
-    int emitCount = 3;
+    (void)color;
+    // 打ち上げ玉の熱い火の粉（黄金〜オレンジの細かい火花）
+    int emitCount = 5;
+    std::uniform_real_distribution<float> distVel(-1.8f, 1.8f);
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+
     for (uint32_t p = 0; p < kNumInstances && emitCount > 0; ++p) {
         if (particles_[p].currentTime >= particles_[p].lifeTime) {
-            particles_[p] = MakeNewParticle(61, emitterPos, 0.0f, {0,0,0}, false);
-            
-            std::uniform_real_distribution<float> distVel(-1.5f, 1.5f);
+            particles_[p] = {};
+            particles_[p].effectType = 61;
+            particles_[p].type = Particle::Type::kBillboard;
+            particles_[p].position = emitterPos;
             particles_[p].velocity = {
                 distVel(randomEngine_),
-                -2.0f - std::uniform_real_distribution<float>(0.0f, 2.0f)(randomEngine_),
+                -3.5f - dist01(randomEngine_) * 3.0f,
                 distVel(randomEngine_)
             };
-            
-            particles_[p].color = { color.x, color.y, color.z, 1.0f };
-            particles_[p].gravity = 0.1f;
-            particles_[p].lifeTime = 0.4f + std::uniform_real_distribution<float>(0.0f, 0.3f)(randomEngine_);
+
+            float sc = (emitCount == 5) ? 0.52f : (0.16f + dist01(randomEngine_) * 0.16f);
+            particles_[p].startScale = sc;
+            particles_[p].endScale = sc * 0.15f;
+            particles_[p].scale = { sc, sc, sc };
+
+            // 先頭は白熱した黄金、残りは暖かい橙の火の粉
+            if (emitCount == 5) {
+                particles_[p].startColor = { 1.0f, 0.95f, 0.78f };
+                particles_[p].endColor   = { 1.0f, 0.65f, 0.20f };
+                particles_[p].lifeTime   = 0.12f;
+            } else {
+                particles_[p].startColor = { 1.0f, 0.76f, 0.32f };
+                particles_[p].endColor   = { 0.95f, 0.28f, 0.05f };
+                particles_[p].lifeTime   = 0.35f + dist01(randomEngine_) * 0.25f;
+            }
+
+            particles_[p].color = { particles_[p].startColor.x, particles_[p].startColor.y, particles_[p].startColor.z, 1.0f };
+            particles_[p].gravity = 0.15f;
+            particles_[p].drag = 3.8f;
+            particles_[p].currentTime = 0.0f;
+            particles_[p].uvTransform = MakeIdentity4x4();
+            particles_[p].useFireworkCurve = true;
+            particles_[p].emitSubTrail = false;
+            emitCount--;
+        }
+    }
+}
+
+void ParticleManager::EmitJetAfterburner(const Vector3& emitterPos, const Vector3& backDir) {
+    int emitCount = 3;
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    std::uniform_real_distribution<float> distSpread(-0.35f, 0.35f);
+
+    for (uint32_t p = 0; p < kNumInstances && emitCount > 0; ++p) {
+        if (particles_[p].currentTime >= particles_[p].lifeTime) {
+            particles_[p] = {};
+            particles_[p].effectType = 61;
+            particles_[p].type = Particle::Type::kBillboard;
+            particles_[p].position = {
+                emitterPos.x + distSpread(randomEngine_) * 0.25f,
+                emitterPos.y + distSpread(randomEngine_) * 0.25f,
+                emitterPos.z + distSpread(randomEngine_) * 0.25f
+            };
+            float speed = 6.0f + dist01(randomEngine_) * 6.0f;
+            particles_[p].velocity = {
+                backDir.x * speed + distSpread(randomEngine_) * 1.5f,
+                backDir.y * speed + distSpread(randomEngine_) * 1.5f,
+                backDir.z * speed + distSpread(randomEngine_) * 1.5f
+            };
+
+            if (emitCount == 3) {
+                // ノズル直後の青白い高温コア炎
+                particles_[p].startScale = 0.62f;
+                particles_[p].endScale = 0.12f;
+                particles_[p].startColor = { 0.45f, 0.78f, 1.0f };
+                particles_[p].endColor = { 1.0f, 0.68f, 0.25f };
+                particles_[p].lifeTime = 0.14f;
+            } else {
+                // 後ろに流れる黄金〜橙の火の粉
+                particles_[p].startScale = 0.32f;
+                particles_[p].endScale = 0.06f;
+                particles_[p].startColor = { 1.0f, 0.78f, 0.34f };
+                particles_[p].endColor = { 1.0f, 0.32f, 0.06f };
+                particles_[p].lifeTime = 0.22f + dist01(randomEngine_) * 0.12f;
+            }
+
+            particles_[p].scale = { particles_[p].startScale, particles_[p].startScale, particles_[p].startScale };
+            particles_[p].color = { particles_[p].startColor.x, particles_[p].startColor.y, particles_[p].startColor.z, 1.0f };
+            particles_[p].gravity = 0.0f;
+            particles_[p].drag = 4.0f;
+            particles_[p].currentTime = 0.0f;
+            particles_[p].uvTransform = MakeIdentity4x4();
+            particles_[p].useFireworkCurve = true;
+            particles_[p].emitSubTrail = false;
+            emitCount--;
+        }
+    }
+}
+
+void ParticleManager::EmitSkywritingFirework(const Vector3& emitterPos, const Vector3& color) {
+    int emitCount = 2;
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    std::uniform_real_distribution<float> distJitter(-0.22f, 0.22f);
+
+    for (uint32_t p = 0; p < kNumInstances && emitCount > 0; ++p) {
+        if (particles_[p].currentTime >= particles_[p].lifeTime) {
+            particles_[p] = {};
+            particles_[p].effectType = 60;
+            particles_[p].type = Particle::Type::kBillboard;
+            particles_[p].position = {
+                emitterPos.x + distJitter(randomEngine_),
+                emitterPos.y + distJitter(randomEngine_),
+                emitterPos.z + distJitter(randomEngine_) * 0.3f
+            };
+            particles_[p].velocity = {
+                distJitter(randomEngine_) * 1.4f,
+                distJitter(randomEngine_) * 1.4f,
+                distJitter(randomEngine_) * 0.6f
+            };
+
+            float sc = (emitCount == 2) ? 0.58f : (0.32f + dist01(randomEngine_) * 0.24f);
+            particles_[p].startScale = sc;
+            particles_[p].endScale = sc * 0.35f;
+            particles_[p].scale = { sc, sc, sc };
+            particles_[p].startColor = (emitCount == 2) ? Vector3{ 1.0f, 0.96f, 0.82f } : color;
+            particles_[p].endColor = { color.x * 0.9f, color.y * 0.55f, color.z * 0.25f };
+            particles_[p].color = { particles_[p].startColor.x, particles_[p].startColor.y, particles_[p].startColor.z, 1.0f };
+            particles_[p].gravity = 0.008f; // ほんのわずかに下に漂う
+            particles_[p].drag = 3.5f;
+            particles_[p].lifeTime = 11.5f + dist01(randomEngine_) * 1.5f;
+            particles_[p].currentTime = 0.0f;
+            particles_[p].uvTransform = MakeIdentity4x4();
+            particles_[p].flickerFreq = 16.0f + dist01(randomEngine_) * 14.0f;
+            particles_[p].useFireworkCurve = true;
+            particles_[p].emitSubTrail = false;
+            particles_[p].isCloudSmoke = false;
+            emitCount--;
+        }
+    }
+}
+
+void ParticleManager::EmitSkywritingCloud(const Vector3& emitterPos) {
+    int emitCount = 2;
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    std::uniform_real_distribution<float> distJitter(-0.20f, 0.20f);
+
+    for (uint32_t p = 0; p < kNumInstances && emitCount > 0; ++p) {
+        if (particles_[p].currentTime >= particles_[p].lifeTime) {
+            particles_[p] = {};
+            particles_[p].effectType = 63;
+            particles_[p].type = Particle::Type::kBillboard;
+            particles_[p].position = {
+                emitterPos.x + distJitter(randomEngine_),
+                emitterPos.y + distJitter(randomEngine_),
+                emitterPos.z + distJitter(randomEngine_) * 0.3f
+            };
+            // 風に流されるようにごくわずかに右・上へ漂う
+            particles_[p].velocity = {
+                0.22f + distJitter(randomEngine_) * 0.5f,
+                0.08f + distJitter(randomEngine_) * 0.5f,
+                distJitter(randomEngine_) * 0.2f
+            };
+
+            float startSc = 0.48f + dist01(randomEngine_) * 0.16f;
+            float endSc   = 1.40f + dist01(randomEngine_) * 0.35f;
+            particles_[p].startScale = startSc;
+            particles_[p].endScale = endSc;
+            particles_[p].scale = { startSc, startSc, startSc };
+
+            // 月明かりに照らされた淡い銀青〜白の雲色
+            particles_[p].startColor = { 0.82f, 0.88f, 0.98f };
+            particles_[p].endColor   = { 0.52f, 0.62f, 0.82f };
+            particles_[p].color = { 0.82f, 0.88f, 0.98f, 0.0f };
+            particles_[p].gravity = 0.0f;
+            particles_[p].drag = 1.6f;
+            particles_[p].lifeTime = 12.5f + dist01(randomEngine_) * 1.5f;
+            particles_[p].currentTime = 0.0f;
+            particles_[p].uvTransform = MakeIdentity4x4();
+            particles_[p].useFireworkCurve = true;
+            particles_[p].emitSubTrail = false;
+            particles_[p].isCloudSmoke = true;
             emitCount--;
         }
     }

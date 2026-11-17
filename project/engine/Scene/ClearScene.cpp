@@ -16,8 +16,8 @@ void ClearScene::Initialize() {
     DirectXCommon* dxCommon = DirectXCommon::GetInstance();
     ID3D12Device* device = dxCommon->GetDevice();
 
-    // クリアカラーのリセット (デフォルトの青緑系に戻す)
-    dxCommon->SetClearColor(0.1f, 0.25f, 0.5f, 1.0f);
+    // クリアカラーを夜空の色に設定
+    dxCommon->SetClearColor(0.002f, 0.004f, 0.015f, 1.0f);
 
     camera_ = std::make_unique<Camera>(WinApp::kClientWidth, WinApp::kClientHeight);
     camera_->SetTranslate({ 0.0f, 0.0f, -40.0f });
@@ -26,9 +26,16 @@ void ClearScene::Initialize() {
     TextureManager::GetInstance()->LoadTexture("Clear/Clear.png");
     TextureManager::GetInstance()->LoadTexture("Player2/Player_basecolor.JPEG");
     TextureManager::GetInstance()->LoadTexture("test.dds"); // 環境マップ用
+    TextureManager::GetInstance()->LoadTexture("dds/qwantani_night_puresky_2k.dds"); // 夜空環境マップ用
     TextureManager::GetInstance()->LoadTexture("circle2.png");
     TextureManager::GetInstance()->LoadTexture("gradationLine.png");
     TextureManager::GetInstance()->LoadTexture("text1.png");
+
+    if (TextureManager::GetInstance()->GetMetaData("dds/qwantani_night_puresky_2k.dds").IsCubemap()) {
+        playerEnvMapName_ = "dds/qwantani_night_puresky_2k.dds";
+    } else {
+        playerEnvMapName_ = "test.dds";
+    }
 
     textureSrvHandle_ = TextureManager::GetInstance()->GetSrvHandleGPU("circle2.png");
     gradationSrvHandle_ = TextureManager::GetInstance()->GetSrvHandleGPU("gradationLine.png");
@@ -48,12 +55,15 @@ void ClearScene::Initialize() {
     clearModel_->transform.rotate = { 0.0f, 3.14159265f, 0.0f };
     clearModel_->transform.translate = { 0.0f, 0.0f, 20.0f }; // 遠く、中央付近に配置
 
-    // 背景を飛ぶプレイヤーモデルのロード
+    // 背景を飛ぶプレイヤーモデルのロード（遠くの夜空を真っ直ぐ飛行し、風景に溶け込むように調整）
     playerModel_ = Model::LoadGLTF("Resources/Player2/Player.obj", device);
     if (playerModel_) {
-        playerModel_->transform.scale = { 3.0f, 3.0f, 3.0f }; // 奥を飛ぶので小さく
-        playerModel_->transform.rotate = { 0.0f, 1.57f, 0.0f }; // 右向き
-        playerModel_->transform.translate = { -40.0f, -2.0f, 25.0f }; // 左奥からスタート
+        playerModel_->transform.scale = { 2.2f, 2.2f, 2.2f };
+        playerModel_->transform.rotate = { 0.0f, 1.57079632f, 0.0f }; // 右向き水平
+        playerModel_->transform.translate = { -95.0f, 8.5f, 75.0f }; // 遠くの奥空を飛行
+        playerModel_->SetColor({ 0.58f, 0.66f, 0.84f, 1.0f });
+        playerModel_->SetEnvironmentCoefficient(0.08f);
+        playerModel_->SetLightingEnabled(true);
     }
 
     // 定数バッファの作成
@@ -75,10 +85,36 @@ void ClearScene::Initialize() {
     directionalLightData_->direction = Normalize({ 0.0f, -1.0f, 1.0f });
     directionalLightData_->intensity = 1.0f;
     directionalLightData_->enableSpotLight = 0; // スポットライト無効
+    directionalLightData_->enableNightEmissive = 0;
+    directionalLightData_->numStreetLamps = 0;
+
+    // プレイヤー専用夜空ライト（右上奥の月光＋花火爆発時の色照り返しスポットライト）
+    playerLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
+    playerLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&playerLightData_));
+    playerLightData_->color = { 0.44f, 0.58f, 0.94f, 1.0f };
+    playerLightData_->direction = Normalize({ -0.55f, -0.45f, 0.70f });
+    playerLightData_->intensity = 0.65f;
+    playerLightData_->enableSpotLight = 1;
+    playerLightData_->spotLightPos = { 0.0f, 0.0f, 20.0f };
+    playerLightData_->spotLightDir = { 0.0f, -1.0f, 0.0f };
+    playerLightData_->spotLightRange = 80.0f;
+    playerLightData_->spotLightCosAngle = std::cos(75.0f * 3.14159265f / 180.0f);
+    playerLightData_->spotLightColor = { 1.0f, 0.8f, 0.4f };
+    playerLightData_->spotLightIntensity = 0.0f;
+    playerLightData_->enableNightEmissive = 0;
+    playerLightData_->numStreetLamps = 0;
 
     cameraResource_ = CreateBufferResource(device, sizeof(CameraDataCB));
     cameraResource_->Map(0, nullptr, reinterpret_cast<void**>(&cameraDataCB_));
     cameraDataCB_->worldPosition = camera_->GetTransform().translate;
+
+    // 夜空背景用定数バッファの作成
+    nightSkyResource_ = CreateBufferResource(device, sizeof(NightSkyCB));
+    nightSkyResource_->Map(0, nullptr, reinterpret_cast<void**>(&nightSkyData_));
+    nightSkyData_->time = 0.0f;
+    nightSkyData_->aspectRatio = static_cast<float>(WinApp::kClientWidth) / static_cast<float>(WinApp::kClientHeight);
+    nightSkyData_->padding[0] = 0.0f;
+    nightSkyData_->padding[1] = 0.0f;
 }
 
 void ClearScene::Finalize() {
@@ -96,31 +132,33 @@ void ClearScene::Update() {
         ActiveFirework fw;
         // 画面下部のランダムな位置から
         fw.position = {
-            -20.0f + static_cast<float>(rand()) / RAND_MAX * 40.0f,
-            -15.0f,
-            10.0f + static_cast<float>(rand()) / RAND_MAX * 20.0f
+            -26.0f + static_cast<float>(rand()) / RAND_MAX * 52.0f,
+            -18.0f,
+            12.0f + static_cast<float>(rand()) / RAND_MAX * 22.0f
         };
-        // 上方へのランダムな速度
+        // 上方へのランダムな速度（頂点付近で綺麗に減速して開くように調整）
         fw.velocity = {
-            -3.0f + static_cast<float>(rand()) / RAND_MAX * 6.0f,
-            18.0f + static_cast<float>(rand()) / RAND_MAX * 8.0f,
+            -2.5f + static_cast<float>(rand()) / RAND_MAX * 5.0f,
+            20.0f + static_cast<float>(rand()) / RAND_MAX * 6.5f,
             -1.0f + static_cast<float>(rand()) / RAND_MAX * 2.0f
         };
         fw.timer = 0.0f;
-        // 1.0秒〜1.5秒後に爆発
-        fw.maxTime = 1.0f + static_cast<float>(rand()) / RAND_MAX * 0.5f;
+        // 1.35秒〜1.85秒後（上昇が落ち着く頂点付近）で爆発
+        fw.maxTime = 1.35f + static_cast<float>(rand()) / RAND_MAX * 0.50f;
 
-        // ランダムな色 (RGB)
-        float r = static_cast<float>(rand()) / RAND_MAX;
-        float g = static_cast<float>(rand()) / RAND_MAX;
-        float b = static_cast<float>(rand()) / RAND_MAX;
-        // 明るさを確保するため、一番強い成分を1.0にする
-        float maxVal = (std::max)({ r, g, b });
-        if (maxVal > 0.0f) {
-            fw.color = { r / maxVal, g / maxVal, b / maxVal };
-        } else {
-            fw.color = { 1.0f, 1.0f, 1.0f };
-        }
+        // 本物の花火らしい鮮やかな炎色反応パレット
+        static const Vector3 kFireworkPalette[] = {
+            { 1.00f, 0.22f, 0.26f }, // 紅 (ストロンチウム)
+            { 0.20f, 0.95f, 0.48f }, // 翠 (バリウム)
+            { 0.25f, 0.62f, 1.00f }, // 蒼 (銅)
+            { 1.00f, 0.84f, 0.30f }, // 黄金 (ナトリウム/鉄)
+            { 0.88f, 0.32f, 1.00f }, // 紫
+            { 1.00f, 0.52f, 0.78f }, // 桜
+            { 0.92f, 0.96f, 1.00f }, // 白銀 (マグネシウム)
+            { 1.00f, 0.50f, 0.16f }, // 橙
+        };
+        int palIdx = rand() % (sizeof(kFireworkPalette) / sizeof(kFireworkPalette[0]));
+        fw.color = kFireworkPalette[palIdx];
 
         activeFireworks_.push_back(fw);
     }
@@ -145,15 +183,82 @@ void ClearScene::Update() {
             if (particleManager_) {
                 particleManager_->EmitFirework(it->position, it->color);
             }
+            // プレイヤーへの花火の照り返しフラッシュを記録
+            fireworkFlashPos_ = it->position;
+            fireworkFlashColor_ = it->color;
+            fireworkFlashTimer_ = 0.65f;
+
             it = activeFireworks_.erase(it);
         } else {
             ++it;
         }
     }
 
+    // 行列更新
+    Matrix4x4 worldMatrix = MakeAffineMatrix(clearModel_->transform.scale, clearModel_->transform.rotate, clearModel_->transform.translate);
+    Matrix4x4 viewMatrix = camera_->GetViewMatrix();
+    Matrix4x4 projectionMatrix = camera_->GetProjectionMatrix();
+    Matrix4x4 viewProj = Multiply(viewMatrix, projectionMatrix);
+    Matrix4x4 wvpMatrix = Multiply(worldMatrix, viewProj);
+
+    transformData_->World = worldMatrix;
+    transformData_->WVP = wvpMatrix;
+
+    // 背景を飛ぶプレイヤーの更新（遠くの夜空をまっすぐ安定して飛行）
+    time_ += kDeltaTime;
+    if (playerModel_ && playerTransformData_) {
+        // 11秒で遠くの空を左から右へ真っ直ぐ飛び去る
+        float duration = 11.0f;
+        float t = std::fmod(time_, duration) / duration;
+
+        float startX = -95.0f;
+        float endX = 95.0f;
+        playerModel_->transform.translate.x = startX + (endX - startX) * t;
+        playerModel_->transform.translate.y = 8.5f;
+        playerModel_->transform.translate.z = 75.0f;
+
+        // 揺れをなくしてまっすぐ水平に飛行させる
+        playerModel_->transform.rotate.x = 0.0f;
+        playerModel_->transform.rotate.y = 1.57079632f;
+        playerModel_->transform.rotate.z = 0.0f;
+
+        Matrix4x4 playerWorldMatrix = MakeAffineMatrix(playerModel_->transform.scale, playerModel_->transform.rotate, playerModel_->transform.translate);
+        Matrix4x4 playerWvpMatrix = Multiply(playerWorldMatrix, viewProj);
+        playerTransformData_->World = playerWorldMatrix;
+        playerTransformData_->WVP = playerWvpMatrix;
+
+        // 機体尾部（左後ろ）からジェットアフターバーナー炎を噴射
+        if (particleManager_) {
+            Vector3 tailPos = {
+                playerModel_->transform.translate.x - 1.8f,
+                playerModel_->transform.translate.y,
+                playerModel_->transform.translate.z
+            };
+            particleManager_->EmitJetAfterburner(tailPos, { -1.0f, 0.0f, 0.0f });
+        }
+
+        // プレイヤーへの花火照り返しスポットライト更新
+        if (playerLightData_) {
+            if (fireworkFlashTimer_ > 0.0f) {
+                fireworkFlashTimer_ = (std::max)(0.0f, fireworkFlashTimer_ - kDeltaTime);
+                float flashRatio = fireworkFlashTimer_ / 0.65f;
+                Vector3 toPlayer = {
+                    playerModel_->transform.translate.x - fireworkFlashPos_.x,
+                    playerModel_->transform.translate.y - fireworkFlashPos_.y,
+                    playerModel_->transform.translate.z - fireworkFlashPos_.z
+                };
+                playerLightData_->spotLightPos = fireworkFlashPos_;
+                playerLightData_->spotLightDir = Normalize(toPlayer);
+                playerLightData_->spotLightColor = fireworkFlashColor_;
+                playerLightData_->spotLightIntensity = 3.2f * flashRatio * flashRatio;
+            } else {
+                playerLightData_->spotLightIntensity = 0.0f;
+            }
+        }
+    }
+
     // パーティクルマネージャーの更新
     if (particleManager_) {
-        Matrix4x4 viewProj = Multiply(camera_->GetViewMatrix(), camera_->GetProjectionMatrix());
         particleManager_->Update(
             viewProj,
             camera_->GetBillboardMatrix(),
@@ -167,47 +272,10 @@ void ClearScene::Update() {
         );
     }
 
-    // 3Dモデルを正面で固定 (回転を停止)
-
-    // 行列更新
-    Matrix4x4 worldMatrix = MakeAffineMatrix(clearModel_->transform.scale, clearModel_->transform.rotate, clearModel_->transform.translate);
-    Matrix4x4 viewMatrix = camera_->GetViewMatrix();
-    Matrix4x4 projectionMatrix = camera_->GetProjectionMatrix();
-    Matrix4x4 wvpMatrix = Multiply(worldMatrix, Multiply(viewMatrix, projectionMatrix));
-
-    transformData_->World = worldMatrix;
-    transformData_->WVP = wvpMatrix;
-
-    // 背景を飛ぶプレイヤーの更新
-    time_ += kDeltaTime;
-    if (playerModel_ && playerTransformData_) {
-        // 8秒で画面の左から右に飛び去るようにする
-        float duration = 8.0f;
-        float t = std::fmod(time_, duration) / duration;
-        
-        // X座標: -60.0f から 60.0f へ移動
-        float startX = -60.0f;
-        float endX = 60.0f;
-        playerModel_->transform.translate.x = startX + (endX - startX) * t;
-        
-        // Y座標: サイン波で少し上下に揺らす
-        playerModel_->transform.translate.y = 5.0f + std::sin(time_ * 2.0f) * 2.5f;
-        
-        // Z座標: 奥側
-        playerModel_->transform.translate.z = 30.0f;
-        
-        // 回転: 右に進んでいる(rotate.y = 1.57f)状態で、ピッチ(X軸)とロール(Z軸)を揺らす
-        playerModel_->transform.rotate.x = std::sin(time_ * 3.0f) * 0.15f; // ピッチ
-        playerModel_->transform.rotate.y = 1.57f; // 右向き
-        playerModel_->transform.rotate.z = -0.1f + std::cos(time_ * 2.0f) * 0.08f; // ロール
-        
-        Matrix4x4 playerWorldMatrix = MakeAffineMatrix(playerModel_->transform.scale, playerModel_->transform.rotate, playerModel_->transform.translate);
-        Matrix4x4 playerWvpMatrix = Multiply(playerWorldMatrix, Multiply(viewMatrix, projectionMatrix));
-        playerTransformData_->World = playerWorldMatrix;
-        playerTransformData_->WVP = playerWvpMatrix;
-    }
-
     cameraDataCB_->worldPosition = camera_->GetTransform().translate;
+    if (nightSkyData_) {
+        nightSkyData_->time = time_;
+    }
 
     // スペースキーでタイトルに戻る
     if (input_->IsKeyTriggered(DIK_SPACE)) {
@@ -221,6 +289,17 @@ void ClearScene::Update() {
 
 void ClearScene::Draw() {
     ID3D12GraphicsCommandList* commandList = DirectXCommon::GetInstance()->GetCommandList();
+
+    // ── 夜空背景の描画 (最背面・深度テストなし) ──
+    if (graphicsPipeline_ && graphicsPipeline_->GetNightSkyPipelineState() && graphicsPipeline_->GetNightSkyRootSignature()) {
+        commandList->SetPipelineState(graphicsPipeline_->GetNightSkyPipelineState());
+        commandList->SetGraphicsRootSignature(graphicsPipeline_->GetNightSkyRootSignature());
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        if (nightSkyResource_) {
+            commandList->SetGraphicsRootConstantBufferView(0, nightSkyResource_->GetGPUVirtualAddress());
+        }
+        commandList->DrawInstanced(3, 1, 0, 0);
+    }
 
     // デスクリプタヒープのセット
     ID3D12DescriptorHeap* modelHeaps[] = { TextureManager::GetInstance()->GetSrvHeap() };
@@ -243,24 +322,28 @@ void ClearScene::Draw() {
             );
         }
 
-        // ── プレイヤーモデルの描画 ──
+        // ── プレイヤーモデルの描画（夜空専用ライト＆夜空環境マップ） ──
         if (playerTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, playerTransformResource_->GetGPUVirtualAddress());
+        if (playerLightResource_) commandList->SetGraphicsRootConstantBufferView(4, playerLightResource_->GetGPUVirtualAddress());
         if (playerModel_) {
             playerModel_->DrawModel(
                 commandList,
                 TextureManager::GetInstance()->GetSrvHandleGPU("Player2/Player_basecolor.JPEG"),
-                TextureManager::GetInstance()->GetSrvHandleGPU("test.dds")
+                TextureManager::GetInstance()->GetSrvHandleGPU(playerEnvMapName_)
             );
         }
 
-        // ── パーティクルの描画 ──
+        // ── パーティクルの描画 (花火専用ソフトグロー加算合成パイプライン) ──
         if (particleManager_ && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
             commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-            BlendMode blendMode = kBlendModeAdd;
-            if (graphicsPipeline_ && graphicsPipeline_->GetPipelineState(blendMode)) {
-                commandList->SetPipelineState(graphicsPipeline_->GetPipelineState(blendMode));
+            ID3D12PipelineState* fwPso = graphicsPipeline_->GetFireworkParticlePipelineState();
+            if (!fwPso) {
+                fwPso = graphicsPipeline_->GetPipelineState(kBlendModeAdd);
+            }
+            if (fwPso) {
+                commandList->SetPipelineState(fwPso);
                 
                 particleManager_->Draw(
                     commandList,

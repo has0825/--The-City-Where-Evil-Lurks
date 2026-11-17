@@ -41,6 +41,15 @@ struct DirectionalLight
     float32_t3 spotLightColor;
     float32_t spotLightIntensity;
     float32_t3 padding;
+
+    // 夜ステージ用：街灯ポイントライト＆窓・電球エミッシブ
+    uint32_t enableNightEmissive;
+    float32_t streetLampIntensity;
+    float32_t streetLampRange;
+    uint32_t numStreetLamps;
+    float32_t4 streetLampPositions[16];
+    float32_t3 streetLampColor;
+    float32_t lampPad;
 };
 
 // スキニングデータ

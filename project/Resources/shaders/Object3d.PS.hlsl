@@ -76,9 +76,47 @@ PixelShaderOutput main(VertexShaderOutput input)
             }
         }
         
-        float32_t3 lightingColor = dirLightingColor + spotLightingColor;
-        
-        output.color.rgb = textureColor.rgb * gMaterial.color.rgb * lightingColor;
+        float32_t3 lampLightingColor = float32_t3(0.0f, 0.0f, 0.0f);
+        if (gDirectionalLight.numStreetLamps > 0u && gDirectionalLight.streetLampRange > 0.01f)
+        {
+            uint32_t lampCount = min(gDirectionalLight.numStreetLamps, 8u);
+            float32_t3 N = normalize(input.normal);
+            for (uint32_t li = 0u; li < lampCount; ++li)
+            {
+                float32_t3 toLamp = gDirectionalLight.streetLampPositions[li].xyz - input.worldPosition;
+                float32_t dist = length(toLamp);
+                if (dist < gDirectionalLight.streetLampRange)
+                {
+                    float32_t3 L = toLamp / max(dist, 0.001f);
+                    float32_t normDist = dist / gDirectionalLight.streetLampRange;
+                    float32_t atten = pow(saturate(1.0f - normDist), 2.0f);
+                    float32_t ndotl = saturate(dot(N, L) * 0.65f + 0.35f);
+                    lampLightingColor += gDirectionalLight.streetLampColor * gDirectionalLight.streetLampIntensity * atten * ndotl;
+                }
+            }
+        }
+
+        float32_t3 lightingColor = dirLightingColor + spotLightingColor + lampLightingColor;
+
+        // 夜ステージ用：ビルの部屋の明かり / 街灯電球の自己発光
+        float32_t3 nightEmissive = float32_t3(0.0f, 0.0f, 0.0f);
+        if (gDirectionalLight.enableNightEmissive == 1u)
+        {
+            // ビルの暖かい窓明かり（RがBより高く明るいピクセル）を抽出し、夜でも光らせる
+            float32_t warmth = saturate((textureColor.r - textureColor.b) * 3.5f);
+            float32_t lum = dot(textureColor.rgb, float32_t3(0.299f, 0.587f, 0.114f));
+            float32_t windowMask = warmth * smoothstep(0.14f, 0.45f, lum);
+            nightEmissive = textureColor.rgb * windowMask * 1.35f;
+        }
+        else if (gDirectionalLight.enableNightEmissive == 2u)
+        {
+            // 街灯の電球カバー部分（明るいクリーム〜黄白色）を発光させる
+            float32_t bulbLum = dot(textureColor.rgb, float32_t3(0.299f, 0.587f, 0.114f));
+            float32_t bulbMask = smoothstep(0.38f, 0.70f, bulbLum);
+            nightEmissive = textureColor.rgb * bulbMask * 2.2f;
+        }
+
+        output.color.rgb = textureColor.rgb * gMaterial.color.rgb * lightingColor + nightEmissive;
         output.color.a = textureColor.a * gMaterial.color.a;
 
         // --- 【追加】環境マップ (Environment Map) の計算 ---

@@ -117,6 +117,8 @@ void TitleScene::Initialize() {
     directionalLightData_->spotLightCosAngle = std::cos(20.0f * static_cast<float>(M_PI) / 180.0f);
     directionalLightData_->spotLightColor = { 0.85f, 0.42f, 0.18f };
     directionalLightData_->spotLightIntensity = 1.65f;
+    directionalLightData_->enableNightEmissive = 0;
+    directionalLightData_->numStreetLamps = 0;
 
     cameraResource_ = CreateBufferResource(device, sizeof(CameraDataCB));
     cameraResource_->Map(0, nullptr, reinterpret_cast<void**>(&cameraDataCB_));
