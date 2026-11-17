@@ -67,6 +67,13 @@ private:
     std::string playerEnvMapName_ = "test.dds";
     float time_ = 0.0f;
 
+    // タイトル遷移時のプレイヤー演出用
+    bool isReturningToTitle_ = false;
+    bool hasTriggeredStarFlash_ = false;
+    float returnTimer_ = 0.0f;
+    Vector3 returnStartPos_{};
+    Vector3 returnStartRot_{};
+
     // 花火爆発のプレイヤーへの照り返し演出用
     Vector3 fireworkFlashPos_ = { 0.0f, 0.0f, 20.0f };
     Vector3 fireworkFlashColor_ = { 1.0f, 0.8f, 0.4f };

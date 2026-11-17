@@ -115,6 +115,11 @@ void ClearScene::Initialize() {
     nightSkyData_->aspectRatio = static_cast<float>(WinApp::kClientWidth) / static_cast<float>(WinApp::kClientHeight);
     nightSkyData_->padding[0] = 0.0f;
     nightSkyData_->padding[1] = 0.0f;
+
+    time_ = 0.0f;
+    isReturningToTitle_ = false;
+    hasTriggeredStarFlash_ = false;
+    returnTimer_ = 0.0f;
 }
 
 void ClearScene::Finalize() {
@@ -204,38 +209,141 @@ void ClearScene::Update() {
     transformData_->World = worldMatrix;
     transformData_->WVP = wvpMatrix;
 
-    // 背景を飛ぶプレイヤーの更新（遠くの夜空をまっすぐ安定して飛行）
+    // プレイヤーの更新（通常時は遠くの夜空を水平飛行、Space押下後は手前接近→遠くへ飛び去り→星輝き）
     time_ += kDeltaTime;
+    const float kReturnDuration = 2.45f;
+    if (isReturningToTitle_) {
+        returnTimer_ += kDeltaTime;
+    }
+
     if (playerModel_ && playerTransformData_) {
-        // 11秒で遠くの空を左から右へ真っ直ぐ飛び去る
-        float duration = 11.0f;
-        float t = std::fmod(time_, duration) / duration;
+        if (!isReturningToTitle_) {
+            // 11秒で遠くの空を左から右へ真っ直ぐ飛び去る
+            float duration = 11.0f;
+            float t = std::fmod(time_, duration) / duration;
 
-        float startX = -95.0f;
-        float endX = 95.0f;
-        playerModel_->transform.translate.x = startX + (endX - startX) * t;
-        playerModel_->transform.translate.y = 8.5f;
-        playerModel_->transform.translate.z = 75.0f;
+            float startX = -95.0f;
+            float endX = 95.0f;
+            playerModel_->transform.translate.x = startX + (endX - startX) * t;
+            playerModel_->transform.translate.y = 8.5f;
+            playerModel_->transform.translate.z = 75.0f;
+            playerModel_->transform.scale = { 2.2f, 2.2f, 2.2f };
 
-        // 揺れをなくしてまっすぐ水平に飛行させる
-        playerModel_->transform.rotate.x = 0.0f;
-        playerModel_->transform.rotate.y = 1.57079632f;
-        playerModel_->transform.rotate.z = 0.0f;
+            // 揺れをなくしてまっすぐ水平に飛行させる
+            playerModel_->transform.rotate.x = 0.0f;
+            playerModel_->transform.rotate.y = 1.57079632f;
+            playerModel_->transform.rotate.z = 0.0f;
+
+            // 機体尾部（左後ろ）からジェットアフターバーナー炎を噴射
+            if (particleManager_) {
+                Vector3 tailPos = {
+                    playerModel_->transform.translate.x - 1.8f,
+                    playerModel_->transform.translate.y,
+                    playerModel_->transform.translate.z
+                };
+                particleManager_->EmitJetAfterburner(tailPos, { -1.0f, 0.0f, 0.0f });
+            }
+        } else {
+            const float kApproachEnd = 0.70f;
+            const float kFlyAwayEnd = 1.85f;
+            const Vector3 nearPos = { 0.0f, -2.5f, -12.0f };
+            const Vector3 farPos = { 16.0f, 22.0f, 180.0f };
+
+            Vector3 flyAwayDiff = {
+                farPos.x - nearPos.x,
+                farPos.y - nearPos.y,
+                farPos.z - nearPos.z
+            };
+            Vector3 flyAwayDir = Normalize(flyAwayDiff);
+            float flyAwayRotY = std::atan2(flyAwayDir.x, flyAwayDir.z);
+            float flyAwayRotX = std::atan2(-flyAwayDir.y, std::sqrt(flyAwayDir.x * flyAwayDir.x + flyAwayDir.z * flyAwayDir.z));
+
+            if (returnTimer_ < kApproachEnd) {
+                // フェーズ1：画面手前にプレイヤーが大きく近づいてくる
+                float u = std::clamp(returnTimer_ / kApproachEnd, 0.0f, 1.0f);
+                float ease = u * u * (3.0f - 2.0f * u);
+                Vector3 curPos = Lerp(returnStartPos_, nearPos, ease);
+                playerModel_->transform.translate = curPos;
+                playerModel_->transform.scale = { 2.2f, 2.2f, 2.2f };
+
+                Vector3 appDiff = {
+                    nearPos.x - returnStartPos_.x,
+                    nearPos.y - returnStartPos_.y,
+                    nearPos.z - returnStartPos_.z
+                };
+                Vector3 appDir = Normalize(appDiff);
+                float appRotY = std::atan2(appDir.x, appDir.z);
+                float appRotX = std::atan2(-appDir.y, std::sqrt(appDir.x * appDir.x + appDir.z * appDir.z));
+
+                // 終盤(u > 0.55)にかけて奥向きへ大きく旋回を開始
+                float turnT = std::clamp((u - 0.55f) / 0.45f, 0.0f, 1.0f);
+                float easeTurn = turnT * turnT * (3.0f - 2.0f * turnT);
+
+                float baseRotY = returnStartRot_.y;
+                float d1 = appRotY - baseRotY;
+                while (d1 < -3.14159265f) d1 += 6.28318530f;
+                while (d1 > 3.14159265f) d1 -= 6.28318530f;
+                float midRotY = baseRotY + d1 * std::clamp(u * 2.0f, 0.0f, 1.0f);
+
+                float d2 = flyAwayRotY - midRotY;
+                while (d2 < -3.14159265f) d2 += 6.28318530f;
+                while (d2 > 3.14159265f) d2 -= 6.28318530f;
+
+                playerModel_->transform.rotate.y = midRotY + d2 * easeTurn;
+                playerModel_->transform.rotate.x = std::lerp(appRotX, flyAwayRotX, easeTurn);
+                playerModel_->transform.rotate.z = std::sin(u * 3.14159265f) * 0.65f;
+
+                if (particleManager_) {
+                    Vector3 curDir = (u < 0.7f) ? appDir : flyAwayDir;
+                    Vector3 tailPos = {
+                        curPos.x - curDir.x * 1.8f,
+                        curPos.y - curDir.y * 1.8f,
+                        curPos.z - curDir.z * 1.8f
+                    };
+                    particleManager_->EmitJetAfterburner(tailPos, { -curDir.x, -curDir.y, -curDir.z });
+                }
+            } else if (returnTimer_ < kFlyAwayEnd) {
+                // フェーズ2：遠くの夜空へ加速しながら飛び去り、小さくなっていく
+                float u = std::clamp((returnTimer_ - kApproachEnd) / (kFlyAwayEnd - kApproachEnd), 0.0f, 1.0f);
+                float easeFly = u * u * (0.4f + 0.6f * u);
+                Vector3 curPos = Lerp(nearPos, farPos, easeFly);
+                playerModel_->transform.translate = curPos;
+
+                // 遠ざかるにつれて星の一粒のように小さくなる
+                float scaleT = std::clamp((u - 0.65f) / 0.35f, 0.0f, 1.0f);
+                float s = std::lerp(2.2f, 0.12f, scaleT);
+                playerModel_->transform.scale = { s, s, s };
+
+                playerModel_->transform.rotate.x = flyAwayRotX;
+                playerModel_->transform.rotate.y = flyAwayRotY;
+                playerModel_->transform.rotate.z = easeFly * 6.28318530f; // 1回転ロールしながら飛び去る
+
+                if (particleManager_) {
+                    Vector3 tailPos = {
+                        curPos.x - flyAwayDir.x * (1.8f * (s / 2.2f)),
+                        curPos.y - flyAwayDir.y * (1.8f * (s / 2.2f)),
+                        curPos.z - flyAwayDir.z * (1.8f * (s / 2.2f))
+                    };
+                    particleManager_->EmitJetAfterburner(tailPos, { -flyAwayDir.x, -flyAwayDir.y, -flyAwayDir.z });
+                }
+            } else {
+                // フェーズ3：遠くで「キラン」と星のように輝く
+                playerModel_->transform.translate = farPos;
+                playerModel_->transform.scale = { 0.0f, 0.0f, 0.0f };
+                if (!hasTriggeredStarFlash_) {
+                    hasTriggeredStarFlash_ = true;
+                    if (particleManager_) {
+                        particleManager_->EmitWhiteCross(farPos, { 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
+                        particleManager_->EmitCustomSparks(farPos, 45.0f, 18, { 0.90f, 0.95f, 1.0f }, 0.0f);
+                    }
+                }
+            }
+        }
 
         Matrix4x4 playerWorldMatrix = MakeAffineMatrix(playerModel_->transform.scale, playerModel_->transform.rotate, playerModel_->transform.translate);
         Matrix4x4 playerWvpMatrix = Multiply(playerWorldMatrix, viewProj);
         playerTransformData_->World = playerWorldMatrix;
         playerTransformData_->WVP = playerWvpMatrix;
-
-        // 機体尾部（左後ろ）からジェットアフターバーナー炎を噴射
-        if (particleManager_) {
-            Vector3 tailPos = {
-                playerModel_->transform.translate.x - 1.8f,
-                playerModel_->transform.translate.y,
-                playerModel_->transform.translate.z
-            };
-            particleManager_->EmitJetAfterburner(tailPos, { -1.0f, 0.0f, 0.0f });
-        }
 
         // プレイヤーへの花火照り返しスポットライト更新
         if (playerLightData_) {
@@ -277,13 +385,39 @@ void ClearScene::Update() {
         nightSkyData_->time = time_;
     }
 
-    // スペースキーでタイトルに戻る
-    if (input_->IsKeyTriggered(DIK_SPACE)) {
+    // スペースキーで「手前接近→遠くへ飛び去り→星輝き」演出を開始
+    if (!isReturningToTitle_ && input_->IsKeyTriggered(DIK_SPACE)) {
+        if (playerModel_) {
+            isReturningToTitle_ = true;
+            hasTriggeredStarFlash_ = false;
+            returnTimer_ = 0.0f;
+            Vector3 curPos = playerModel_->transform.translate;
+            // 画面外にいた場合は画面内の奥寄りから登場させる
+            if (curPos.x < -38.0f || curPos.x > 38.0f) {
+                returnStartPos_ = { -24.0f, 8.5f, 75.0f };
+                returnStartRot_ = { 0.0f, 1.57079632f, 0.0f };
+            } else {
+                returnStartPos_ = curPos;
+                returnStartRot_ = playerModel_->transform.rotate;
+            }
+        } else {
+            if (particleManager_) {
+                particleManager_->Clear();
+            }
+            activeFireworks_.clear();
+            SceneManager::GetInstance()->ChangeScene("TITLE");
+            return;
+        }
+    }
+
+    // 接近演出完了後にタイトルへ遷移
+    if (isReturningToTitle_ && returnTimer_ >= kReturnDuration) {
         if (particleManager_) {
             particleManager_->Clear();
         }
         activeFireworks_.clear();
         SceneManager::GetInstance()->ChangeScene("TITLE");
+        return;
     }
 }
 
@@ -325,7 +459,7 @@ void ClearScene::Draw() {
         // ── プレイヤーモデルの描画（夜空専用ライト＆夜空環境マップ） ──
         if (playerTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, playerTransformResource_->GetGPUVirtualAddress());
         if (playerLightResource_) commandList->SetGraphicsRootConstantBufferView(4, playerLightResource_->GetGPUVirtualAddress());
-        if (playerModel_) {
+        if (playerModel_ && !(isReturningToTitle_ && hasTriggeredStarFlash_)) {
             playerModel_->DrawModel(
                 commandList,
                 TextureManager::GetInstance()->GetSrvHandleGPU("Player2/Player_basecolor.JPEG"),
