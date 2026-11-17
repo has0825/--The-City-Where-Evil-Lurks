@@ -385,8 +385,8 @@ void ClearScene::Update() {
         nightSkyData_->time = time_;
     }
 
-    // スペースキーで「手前接近→遠くへ飛び去り→星輝き」演出を開始
-    if (!isReturningToTitle_ && input_->IsKeyTriggered(DIK_SPACE)) {
+    // スペースキー押下、またはクリア画面表示から3.2秒後に自動で「手前接近→遠くへ飛び去り→星輝き」演出を開始
+    if (!isReturningToTitle_ && (input_->IsKeyTriggered(DIK_SPACE) || time_ >= 3.2f)) {
         if (playerModel_) {
             isReturningToTitle_ = true;
             hasTriggeredStarFlash_ = false;
@@ -405,18 +405,18 @@ void ClearScene::Update() {
                 particleManager_->Clear();
             }
             activeFireworks_.clear();
-            SceneManager::GetInstance()->ChangeScene("TITLE");
+            SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
             return;
         }
     }
 
-    // 接近演出完了後にタイトルへ遷移
+    // 接近・星輝き演出完了後にラスト一撃ボス戦(GAMEPLAY)へループ遷移
     if (isReturningToTitle_ && returnTimer_ >= kReturnDuration) {
         if (particleManager_) {
             particleManager_->Clear();
         }
         activeFireworks_.clear();
-        SceneManager::GetInstance()->ChangeScene("TITLE");
+        SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
         return;
     }
 }

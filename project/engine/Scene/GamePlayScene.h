@@ -810,6 +810,10 @@ private:
     float bossDebrisSparkTimer_ = 0.0f;
     int bossCollapseExplosionCount_ = 0;
 
+    // クリア画面ブランチ用：ラスト一撃自動撃破デモタイマー
+    float autoLastHitTimer_ = 0.0f;
+    bool hasFiredAutoLastHit_ = false;
+
     // ── 地形(Terrain)用 ──
     std::unique_ptr<Model> terrainModel_;
     Microsoft::WRL::ComPtr<ID3D12Resource> terrainTransformResource_;

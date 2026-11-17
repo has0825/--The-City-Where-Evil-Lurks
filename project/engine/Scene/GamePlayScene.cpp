@@ -1805,23 +1805,59 @@ void GamePlayScene::Initialize() {
     tokyoTransformData_->World = MakeIdentity4x4();
     tokyoTransformData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
-    // ── 通常プレイ開始時は最初からステージ遠方(S=1100m)にボスがいる状態でスタートし、
-    //    ロード画面明けは地球→日本→東京夜景を省いて、ボスの登場演出(t=6.4s〜)から直接開始する ──
+    // ── クリア画面ブランチ用：最初からラスト一撃のボス戦(kBossFight)状態で開始 ──
     if (!isTitleMode_) {
-        currentPhase_ = GamePhase::kPhase1;
-        bossAppearanceTimer_ = kBossIntroTotalDuration - 6.4f; // 地球・日本・東京夜景をスキップし、ボスの登場演出のみを再生
-        hasStartedInitialPhase_ = false; // 冒頭演出終了後に「PHASE 1」を開始
+        // 曲がり角の演出と被らないよう、最も長い直線区間の先頭に開始位置をずらす
+        if (!waypointDistances_.empty()) {
+            float totalDist = waypointDistances_.back();
+            float bestStartS = 0.0f;
+            float bestLength = -1.0f;
+            float prevEnd = 0.0f;
+            for (const auto& c : corners_) {
+                float segLen = c.triggerS - prevEnd;
+                if (segLen > bestLength) {
+                    bestLength = segLen;
+                    bestStartS = prevEnd;
+                }
+                prevEnd = c.cornerS + 120.0f;
+            }
+            if (totalDist > prevEnd) {
+                float tailLen = totalDist - prevEnd - 250.0f;
+                if (tailLen > bestLength) {
+                    bestLength = tailLen;
+                    bestStartS = prevEnd;
+                }
+            }
+            fighterWorldZ_ = bestStartS;
+            for (auto& c : corners_) {
+                if (c.cornerS < fighterWorldZ_ + 100.0f) {
+                    c.completed = true;
+                }
+            }
+        }
+
+        currentPhase_ = GamePhase::kBossFight;
+        bossAppearanceTimer_ = 0.0f;
+        hasStartedInitialPhase_ = true;
         phaseIntroTimer_ = -1.0f;
         warningScrollOffset_ = 0.0f;
         warningLastBeatIndex_ = -1;
-        bossZOffset_ = 1100.0f; // 最初ボスとプレイヤーはある程度離れた位置(1100m前方)に配置
+        bossZOffset_ = 169.0f;
         bossTime_ = 0.0f;
-        isBossLanded_ = false;
-        isBossRoared_ = false;
+        bossHP_ = 4.0f;
+        bossHPVisual_ = 4.0f;
+        isBossLanded_ = true;
+        isBossModelVisible_ = true;
+        isBossRoared_ = true;
         hasEmittedJumpStart_ = false;
         hasEmittedJumpEnd_ = false;
         bossActionState_ = BossActionState::kIdle;
         bossActionTimer_ = 0.0f;
+        autoLastHitTimer_ = 0.0f;
+        hasFiredAutoLastHit_ = false;
+        for (auto& enemy : enemies_) {
+            enemy.isAlive = false;
+        }
     }
 }
 
@@ -2039,9 +2075,9 @@ void GamePlayScene::Update() {
                 outDir.z * outSpeed + (dist01(randomEngine_) - 0.5f) * 6.0f
             };
             bossLegDebris_[li].angVel = {
-                (dist01(randomEngine_) - 0.5f) * 5.0f,
-                (dist01(randomEngine_) - 0.5f) * 5.0f,
-                (dist01(randomEngine_) - 0.5f) * 5.0f
+                (dist01(randomEngine_) - 0.5f) * 1.4f,
+                (dist01(randomEngine_) - 0.5f) * 3.8f,
+                (dist01(randomEngine_) - 0.5f) * 1.4f
             };
         }
         
@@ -2194,7 +2230,7 @@ void GamePlayScene::Update() {
                 if (bossDefeatHitTimer_ < part.detachTime) {
                     // 分離前：膝から崩れ落ちるように沈み込み・前傾しつつ微かに機能停止の振動
                     if (isBody) {
-                        part.offset.y = -11.0f * easeKneel;
+                        part.offset.y = -9.5f * easeKneel;
                         part.rotAngle.x = 0.35f * easeKneel;
                     } else {
                         Vector3 outDir = Subtract(part.initialPos, bossPos);
@@ -2203,9 +2239,9 @@ void GamePlayScene::Update() {
                         if (outLen > 0.01f) {
                             outDir = Scale(outDir, 1.0f / outLen);
                         }
-                        part.offset.x = outDir.x * 3.5f * easeKneel;
-                        part.offset.z = outDir.z * 3.5f * easeKneel;
-                        part.offset.y = -6.5f * easeKneel;
+                        part.offset.x = outDir.x * 4.0f * easeKneel;
+                        part.offset.z = outDir.z * 4.0f * easeKneel;
+                        part.offset.y = -1.5f * easeKneel;
                     }
 
                     float jitterAmp = isBody ? 0.18f : 0.25f;
@@ -2276,9 +2312,9 @@ void GamePlayScene::Update() {
                 cbData->World = Multiply(part.initialWorld, deltaWorld);
             };
 
-            updatePartPhysics(bossBodyDebris_, bossBodyTransformData_, kFloorY + 6.5f, 0.18f, 46.0f, true);
+            updatePartPhysics(bossBodyDebris_, bossBodyTransformData_, kFloorY + 8.5f, 0.18f, 46.0f, true);
             for (int li = 0; li < 8; ++li) {
-                updatePartPhysics(bossLegDebris_[li], bossLegTransformData_[li], kFloorY + 1.8f, 0.28f, 42.0f, false);
+                updatePartPhysics(bossLegDebris_[li], bossLegTransformData_[li], kFloorY + 12.5f, 0.28f, 42.0f, false);
             }
 
             // 機能停止後の余韻：壊れた胴体や脚から最後の微かなショート火花
@@ -4199,15 +4235,26 @@ void GamePlayScene::Update() {
                 )
             );
 
+            // クリア画面ブランチ用：ボス戦開始後0.9秒でラスト一撃を自動発射
+            bool triggerAutoLastHit = false;
+            if (currentPhase_ == GamePhase::kBossFight && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_ && !hasFiredAutoLastHit_) {
+                autoLastHitTimer_ += kDeltaTime;
+                if (autoLastHitTimer_ >= 0.9f) {
+                    hasFiredAutoLastHit_ = true;
+                    triggerAutoLastHit = true;
+                }
+            }
+
             // ボス登場演出中は射撃を禁止
-            if (input_->IsKeyTriggered(DIK_SPACE) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_) {
+            if ((input_->IsKeyTriggered(DIK_SPACE) || triggerAutoLastHit) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_) {
                 // 翼の発射位置をレールのright/up方向で計算
                 Vector3 leftWing  = Add(fighterWorldPos, Add(Scale(playerRailRight, -2.5f), Scale(playerRailUp, 0.8f)));
                 Vector3 rightWing = Add(fighterWorldPos, Add(Scale(playerRailRight,  2.5f), Scale(playerRailUp, 0.8f)));
 
-                Vector3 dirLeft  = Normalize({ reticlePos.x - leftWing.x,  reticlePos.y - leftWing.y,  reticlePos.z - leftWing.z });
-                Vector3 dirRight = Normalize({ reticlePos.x - rightWing.x, reticlePos.y - rightWing.y, reticlePos.z - rightWing.z });
-                float bulletSpeed = 150.0f + boostForwardSpeed_;
+                Vector3 aimTarget = triggerAutoLastHit ? GetBossPosition(0.0f) : reticlePos;
+                Vector3 dirLeft  = Normalize({ aimTarget.x - leftWing.x,  aimTarget.y - leftWing.y,  aimTarget.z - leftWing.z });
+                Vector3 dirRight = Normalize({ aimTarget.x - rightWing.x, aimTarget.y - rightWing.y, aimTarget.z - rightWing.z });
+                float bulletSpeed = triggerAutoLastHit ? 260.0f : (150.0f + boostForwardSpeed_);
 
                 for (auto& b : playerBullets_) {
                     if (b.currentTime >= b.lifeTime) {
