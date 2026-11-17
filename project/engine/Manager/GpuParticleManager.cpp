@@ -55,6 +55,9 @@ void GpuParticleManager::Emit() {
     commandList->SetComputeRootSignature(graphicsPipeline->GetGpuParticleEmitRootSignature());
     commandList->SetPipelineState(graphicsPipeline->GetGpuParticleEmitPipelineState());
 
+    // ComputeRootDescriptorTable をセットする前に確実に SrvManager のディスクリプタヒープをバインドする
+    SrvManager::GetInstance()->PreDraw();
+
     // [0] u0, u1 (DescriptorTable)
     SrvManager::GetInstance()->SetComputeRootDescriptorTable(0, uavIndex_);
     // [1] b0 (Emitter)
@@ -92,6 +95,9 @@ void GpuParticleManager::UpdateCS() {
 
     commandList->SetComputeRootSignature(graphicsPipeline->GetGpuParticleUpdateRootSignature());
     commandList->SetPipelineState(graphicsPipeline->GetGpuParticleUpdatePipelineState());
+
+    // ComputeRootDescriptorTable をセットする前に確実に SrvManager のディスクリプタヒープをバインドする
+    SrvManager::GetInstance()->PreDraw();
 
     // [0] u0 (DescriptorTable)
     SrvManager::GetInstance()->SetComputeRootDescriptorTable(0, uavIndex_);

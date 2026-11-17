@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "BaseScene.h"
 #include "DirectXCommon.h"
 #include "Input.h"
@@ -390,9 +390,10 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> buildingTransformResources_[kMaxBuildingCBs];
     TransformationMatrix* buildingTransformData_[kMaxBuildingCBs] = { nullptr };
 
-    // GPUParticle 破片バースト放出用
+    // GPUParticle 破片バースト放出用 (Draw()内の設定済みディスクリプタヒープ上で安全にDispatchするためキューイング)
     bool triggerDebrisEmit_ = false;
     Vector3 debrisEmitPos_ = { 0.0f, 0.0f, 0.0f };
+    uint32_t debrisEmitCount_ = 30000;
 
     // 床(Plane)用
     std::unique_ptr<Model> floorModel_;
@@ -481,8 +482,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> bulletTransformResources_[kMaxBullets];
     TransformationMatrix* bulletTransformData_[kMaxBullets] = { nullptr };
 
-    // エイムアシスト用：徐々に補間されるレティクル位置
-    Vector3 aimReticlePos_ = { 0.0f, 0.0f, 0.0f };
+    // エイムアシスト用：プレイヤーのレール相対空間(Right, Up, Forward)で補間されるレティクル位置
+    Vector3 aimReticlePos_ = { 0.0f, 0.0f, 120.0f };
 
     // ブーストRadialBlur用
     bool isBoosting_ = false;                  // ブースト動作中フラグ
@@ -506,7 +507,7 @@ private:
     // フェーズ管理用
     GamePhase currentPhase_ = GamePhase::kPhase1; // 初期値フェーズ1スタート
     float phaseTimer_ = 0.0f;
-    static constexpr float kPhaseDuration = 4.0f; // 1フェーズ4秒に短縮
+    static constexpr float kPhaseDuration = 10.0f; // 1フェーズ4秒に短縮
 
     // フェーズ表示演出（高速ブースト＆ソニックブーム演出）用メンバ変数
     static constexpr float kPhaseIntroDuration = 2.4f;
@@ -540,6 +541,8 @@ private:
     std::unique_ptr<Sprite> warningTapeBottomSprites_[4];
     std::unique_ptr<Sprite> warningFrameSprite_;
     std::unique_ptr<Sprite> warningRedOverlaySprite_;
+    std::unique_ptr<Sprite> bossDefeatTextSprite_;
+    std::unique_ptr<Sprite> bossDefeatTextGhostSprites_[2];
     float warningScrollOffset_ = 0.0f;
     int warningLastBeatIndex_ = -1;
 
@@ -563,29 +566,29 @@ private:
     float bossBodyRotY_ = 273.0f;      // ボス胴体のY回転(プレイヤーに向けるため)
     Vector3 bossWebFireOffset_ = { 0.0f, 27.0f, 36.0f }; // 蜘蛛の糸（ビーム）発射位置のオフセット (お尻)
     
-    // 左右対称な4対の足の配置パラメータ (ユーザーがImGuiで完全個別調整可能)
-    Vector3 bossLegPairPos0_ = { 1.80f, -3.80f, 6.20f };   // 前足 (ペア0: 外側に大きく張り出す)
-    float bossLegPairRotY0_ = 165.0f;
-    Vector3 bossLegPairPos1_ = { 2.40f, -4.00f, 4.00f };   // 中前足 (ペア1: 威圧的にアーチを描く)
-    float bossLegPairRotY1_ = 140.0f;
-    Vector3 bossLegPairPos2_ = { 2.40f, -4.20f, -4.00f };  // 中後足 (ペア2: 後方で力強く踏ん張る)
-    float bossLegPairRotY2_ = 35.0f;
-    Vector3 bossLegPairPos3_ = { 1.90f, -4.10f, -6.50f };  // 後足 (ペア3: 外側後方に突き出す)
-    float bossLegPairRotY3_ = 15.0f;
+    // 左右対称な4対の足の配置パラメータ (胴体を前へ寄せて8本の足の付け根を胴体内部へ深く埋め込み、40度ずつ広く放射状に展開して足同士の貫通・重なりと胴体からの分離を完全防止)
+    Vector3 bossLegPairPos0_ = { 3.35f, -2.85f, 1.50f };   // 第1脚・前足 (ペア0: 胴体前部ソケット内部に密着し前方外側へ張り出す)
+    float bossLegPairRotY0_ = 120.0f;
+    Vector3 bossLegPairPos1_ = { 2.50f, -2.55f, 1.75f };   // 第2脚・中前足 (ペア1: 胴体中前部ソケット内部に密着し外側へアーチを描く)
+    float bossLegPairRotY1_ = 160.0f;
+    Vector3 bossLegPairPos2_ = { 1.65f, -2.15f, 1.85f };   // 第3脚・中後足 (ペア2: 胴体中後部ソケット内部に密着し外側へ踏ん張る)
+    float bossLegPairRotY2_ = -160.0f;
+    Vector3 bossLegPairPos3_ = { 0.80f, -1.70f, 1.65f };   // 第4脚・後足 (ペア3: 胴体後部ソケット内部に密着し後方外側へ突き出す)
+    float bossLegPairRotY3_ = -120.0f;
 
-    // 歩行アニメーション制御用パラメータ
-    float bossLegSwingSpeed_ = 5.8f;   // 歩行の速さ
-    float bossLegSwingRange_ = 0.35f;   // 前後の振れ幅
-    float bossLegLiftRange_ = 0.65f;    // 上下のステップ幅（より高くダイナミックに持ち上げる）
+    // 歩行アニメーション制御用パラメータ (上下の足踏みに加えて、足同士がぶつからない範囲で横・前後へしっかり動かす)
+    float bossLegSwingSpeed_ = 5.6f;    // 歩行の速さ
+    float bossLegSwingRange_ = 0.22f;   // 横・前後のスイング振れ幅（40度間隔の扇状配置により隣り合う足とぶつからない最大可動域）
+    float bossLegLiftRange_ = 7.80f;    // 上下の足踏みリフト量（横移動とバランス良く連動して足踏みする高さ）
     float bossTime_ = 0.0f;            // アニメーション用タイマー
 
     // 蜘蛛ボスの足ピボット位置 (ローカル座標での根本位置)
     float bossLegPivotY_ = 0.08f;
     float bossLegPivotZ_ = 0.45f;
 
-    // 蜘蛛ボスの胴体の揺れパラメータ
-    float bossBodyBounceRange_ = 0.45f;  // 胴体の上下の重厚な揺れ幅(メートル)
-    float bossBodyRollRange_ = 3.5f;    // 胴体の左右のロール角(度)
+    // 蜘蛛ボスの胴体の揺れパラメータ (真ん中の胴体が止まって見えないよう、足踏みに連動してダイナミックに揺らす)
+    float bossBodyBounceRange_ = 3.20f;  // 胴体の上下の重厚な揺れ幅(メートル)
+    float bossBodyRollRange_ = 7.5f;    // 胴体の左右のロール角(度)
 
     // 地面ひび割れ＆交差点（十字路）タイル管理
     D3D12_GPU_DESCRIPTOR_HANDLE crossroadSrvHandleGPU_ = {};
@@ -791,4 +794,50 @@ private:
     Vector3 GetBossPosition(float bodyBounce, float dropOffset = 0.0f, float yAttackOffset = 0.0f);
     bool isBossFightInitialized_ = false; // ボス戦のビルプール初期化フラグ
     bool hasStartedInitialPhase_ = false; // ロード画面の左右分割が完了して画面外へ出た後にPHASE 1を開始するフラグ
+
+    // ── 曲がり角（A / D 長押しルート選択）演出用 ──
+    struct CornerInfo {
+        float cornerS = 0.0f;      // 曲がり角の中心レール距離
+        float triggerS = 0.0f;     // 演出開始レール距離 (cornerS - 95m)
+        int correctDir = 1;        // 正解の方向 (-1: Aキー[左], +1: Dキー[右])
+        Vector3 cornerPos = {};    // 交差点中心ワールド座標
+        Vector3 dirBefore = {};    // 進入時の進行方向ベクトル
+        Vector3 dirAfter = {};     // 脱出時の進行方向ベクトル
+        Vector3 rightBefore = {};  // 進入時の右方向ベクトル
+        bool completed = false;    // 通過済みフラグ
+    };
+    enum class CornerTurnState {
+        kNone,
+        kPromptAndHold,  // 角の手前で減速し、周りを薄く赤くして A / D 長押しでルートを選ぶ（長押し中は集中線）
+        kTurningCorrect, // 正しいルートを選択完了！集中線を出しながら高速バンク旋回で角を曲がる
+        kTurningWrong    // 間違えたルートを選択（または時間切れ）！別方向へ進みながら徐々に画面を暗くしてGAMEOVERへ
+    };
+    std::vector<CornerInfo> corners_;
+    CornerTurnState cornerState_ = CornerTurnState::kNone;
+    int activeCornerIndex_ = -1;
+    int cornerHoldingDir_ = 0;            // 現在長押し中の方向 (-1: A, +1: D, 0: なし)
+    int cornerChosenDir_ = 0;             // 確定した選択方向 (-1: A, +1: D, 0: 未選択直進)
+    float cornerHoldProgress_ = 0.0f;     // 長押しゲージ進捗 (0.0 ～ 1.0)
+    float cornerTimer_ = 0.0f;            // 状態内タイマー
+    float wrongRouteDarkenAlpha_ = 0.0f;  // 間違えたルート選択時の暗転アルファ (0.0 ～ 1.0)
+    Vector3 wrongRouteStartPos_ = {};
+    Vector3 wrongRouteMoveDir_ = {};
+    std::unique_ptr<Sprite> cornerUiSprites_[48];
+    std::unique_ptr<Sprite> cornerSpeedLineSprites_[24];
+    bool isOpeningIntro_ = true;          // ゲーム開始時の地球→ボス演出か、ボス戦突入時の再咆哮かを区別
+
+    // ── ゲーム開始演出（地球 -> 日本 -> 東京の夜景 -> ステージ俯瞰 -> ボス登場演出）用 3Dモデル ──
+    static constexpr float kBossIntroTotalDuration = 13.6f;
+    std::unique_ptr<Model> earthModel_;
+    std::unique_ptr<Model> japanModel_;
+    std::unique_ptr<Model> tokyoModel_;
+    Microsoft::WRL::ComPtr<ID3D12Resource> earthTransformResource_;
+    TransformationMatrix* earthTransformData_ = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> japanTransformResource_;
+    TransformationMatrix* japanTransformData_ = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> tokyoTransformResource_;
+    TransformationMatrix* tokyoTransformData_ = nullptr;
+    float earthAlpha_ = 0.0f;
+    float japanAlpha_ = 0.0f;
+    float tokyoAlpha_ = 0.0f;
 };

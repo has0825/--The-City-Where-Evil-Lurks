@@ -1,4 +1,4 @@
-#include "GameOverScene.h"
+﻿#include "GameOverScene.h"
 #include "SceneManager.h"
 #include "WinApp.h"
 #include "TextureManager.h"
@@ -117,7 +117,7 @@ void GameOverScene::Initialize() {
         }
         titleheModel_->transform.scale = { baseScale * aspect, baseScale, 1.0f };
         titleheModel_->transform.rotate = { 0.0f, 0.0f, 0.0f }; // カリングを防ぐため回転なし (法線がカメラ側を向くようにする)
-        titleheModel_->transform.translate = { 7.0f, -4.0f, 20.0f }; // 右側に配置（床Z=-2〜58の上、中央キャラクターと被らないように離す、間隔を広げ少し下げる）
+        titleheModel_->transform.translate = { 0.0f, -4.6f, 20.0f }; // 下側に配置（タイトルへ）
         titleheModel_->SetLightingEnabled(false);
         titleheModel_->SetEnvironmentCoefficient(0.0f);
     }
@@ -132,7 +132,7 @@ void GameOverScene::Initialize() {
         }
         restartModel_->transform.scale = { baseScale * aspect, baseScale, 1.0f };
         restartModel_->transform.rotate = { 0.0f, 0.0f, 0.0f }; // カリングを防ぐため回転なし
-        restartModel_->transform.translate = { -7.0f, -4.0f, 20.0f }; // 左側に配置（床Z=-2〜58の上、中央キャラクターと被らないように離す、間隔を広げ少し下げる）
+        restartModel_->transform.translate = { 0.0f, -2.2f, 20.0f }; // 上側に配置（再開）
         restartModel_->SetLightingEnabled(false);
         restartModel_->SetEnvironmentCoefficient(0.0f);
     }
@@ -148,6 +148,20 @@ void GameOverScene::Initialize() {
     restartTransformData_->WVP = MakeIdentity4x4();
     restartTransformData_->World = MakeIdentity4x4();
 
+    // 統一2D UIテクスチャのロードとスプライト初期化
+    TextureManager::GetInstance()->LoadTexture("gameover_logo.png");
+    TextureManager::GetInstance()->LoadTexture("gameover_restart.png");
+    TextureManager::GetInstance()->LoadTexture("gameover_title.png");
+    TextureManager::GetInstance()->LoadTexture("gameover_push_space.png");
+    TextureManager::GetInstance()->LoadTexture("human/white.png");
+
+    gameOverLogoSprite_ = Sprite::Create("gameover_logo.png", { 0.0f, 0.0f });
+    restartSprite_ = Sprite::Create("gameover_restart.png", { 0.0f, 0.0f });
+    titleSprite_ = Sprite::Create("gameover_title.png", { 0.0f, 0.0f });
+    pushSpaceSprite_ = Sprite::Create("gameover_push_space.png", { 0.0f, 0.0f });
+    for (int k = 0; k < 4; ++k) {
+        selectArrowSprites_[k] = Sprite::Create("human/white.png", { 0.0f, 0.0f });
+    }
     // 白フラッシュ用スプライトの初期化
     whiteFlashSprite_ = Sprite::Create("white1x1.png", { 0.0f, 0.0f });
     if (whiteFlashSprite_) {
@@ -164,22 +178,56 @@ void GameOverScene::Update() {
     float kDeltaTime = 1.0f / 60.0f;
     DirectXCommon* dxCommon = DirectXCommon::GetInstance();
 
+    animTimer_ += kDeltaTime;
+
     if (transitionPhase_ == TransitionPhase::kNone) {
-        // 左右キーまたはA/Dキーで選択の切り替え
+        // 左右キーまたはA/Dキーで選択の切り替え（左：再開 RESTART、右：タイトルへ TITLE）
         if (input_->IsKeyTriggered(DIK_LEFT) || input_->IsKeyTriggered(DIK_A)) {
             selection_ = Selection::kRestart;
         }
         if (input_->IsKeyTriggered(DIK_RIGHT) || input_->IsKeyTriggered(DIK_D)) {
             selection_ = Selection::kTitlehe;
         }
+        if (input_->IsKeyTriggered(DIK_UP) || input_->IsKeyTriggered(DIK_W) || input_->IsKeyTriggered(DIK_DOWN) || input_->IsKeyTriggered(DIK_S)) { selection_ = (selection_ == Selection::kRestart) ? Selection::kTitlehe : Selection::kRestart; }
 
-        // 選択状態に応じてモデルの色（明暗）を変更
+        // 選択状態に応じてモデルの色（明暗）とスケール・脈動を変更（上下配置で直感的にどちらが選ばれているか強調）
+        float pulse = 1.0f + 0.05f * std::sin(animTimer_ * 8.0f);
+        float baseScale = 1.2f;
+
         if (selection_ == Selection::kRestart) {
-            if (restartModel_) restartModel_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
-            if (titleheModel_) titleheModel_->SetColor({ 0.3f, 0.3f, 0.3f, 0.7f });
+            if (restartModel_) {
+                restartModel_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+                float w = (float)TextureManager::GetInstance()->GetMetaData("Restart.png").width;
+                float h = (float)TextureManager::GetInstance()->GetMetaData("Restart.png").height;
+                float aspect = (h > 0.0f) ? (w / h) : 3.0f;
+                float s = baseScale * 1.18f * pulse;
+                restartModel_->transform.scale = { s * aspect, s, 1.0f };
+            }
+            if (titleheModel_) {
+                titleheModel_->SetColor({ 0.40f, 0.40f, 0.40f, 0.55f });
+                float w = (float)TextureManager::GetInstance()->GetMetaData("Titlehe.png").width;
+                float h = (float)TextureManager::GetInstance()->GetMetaData("Titlehe.png").height;
+                float aspect = (h > 0.0f) ? (w / h) : 3.0f;
+                float s = baseScale * 0.95f;
+                titleheModel_->transform.scale = { s * aspect, s, 1.0f };
+            }
         } else {
-            if (restartModel_) restartModel_->SetColor({ 0.3f, 0.3f, 0.3f, 0.7f });
-            if (titleheModel_) titleheModel_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+            if (restartModel_) {
+                restartModel_->SetColor({ 0.40f, 0.40f, 0.40f, 0.55f });
+                float w = (float)TextureManager::GetInstance()->GetMetaData("Restart.png").width;
+                float h = (float)TextureManager::GetInstance()->GetMetaData("Restart.png").height;
+                float aspect = (h > 0.0f) ? (w / h) : 3.0f;
+                float s = baseScale * 0.95f;
+                restartModel_->transform.scale = { s * aspect, s, 1.0f };
+            }
+            if (titleheModel_) {
+                titleheModel_->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+                float w = (float)TextureManager::GetInstance()->GetMetaData("Titlehe.png").width;
+                float h = (float)TextureManager::GetInstance()->GetMetaData("Titlehe.png").height;
+                float aspect = (h > 0.0f) ? (w / h) : 3.0f;
+                float s = baseScale * 1.18f * pulse;
+                titleheModel_->transform.scale = { s * aspect, s, 1.0f };
+            }
         }
 
         // ライトパラメータを初期状態に維持
@@ -360,15 +408,15 @@ void GameOverScene::Draw() {
         if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
         if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
 
-        // GameOverロゴを描画
-        if (transformResource_) commandList->SetGraphicsRootConstantBufferView(1, transformResource_->GetGPUVirtualAddress());
-        if (gameOverModel_) {
-            gameOverModel_->DrawModel(
-                commandList,
-                TextureManager::GetInstance()->GetSrvHandleGPU("GameOver/GameOver.png"),
-                TextureManager::GetInstance()->GetSrvHandleGPU("test.dds")
-            );
-        }
+        // GameOverロゴを描画 (古い3Dモデルは描画せず、2D統一スプライトUIで描画)
+        // if (transformResource_) commandList->SetGraphicsRootConstantBufferView(1, transformResource_->GetGPUVirtualAddress());
+        // if (gameOverModel_) {
+        //     gameOverModel_->DrawModel(
+        //         commandList,
+        //         TextureManager::GetInstance()->GetSrvHandleGPU("GameOver/GameOver.png"),
+        //         TextureManager::GetInstance()->GetSrvHandleGPU("test.dds")
+        //     );
+        // }
 
         // プレイヤーモデルを描画
         if (playerTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, playerTransformResource_->GetGPUVirtualAddress());
@@ -389,44 +437,132 @@ void GameOverScene::Draw() {
                 TextureManager::GetInstance()->GetSrvHandleGPU("test.dds")
             );
         }
+// 
+//         // ── 【修正】UIモデルを描画する直前でアルファブレンド用パイプラインステートに切り替える ──
+//         if (graphicsPipeline_ && graphicsPipeline_->GetObject3dBlendNormalPipelineState()) {
+//             commandList->SetPipelineState(graphicsPipeline_->GetObject3dBlendNormalPipelineState());
+//         }
+// 
+//         // Restart UIモデルを描画
+//         if (restartTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, restartTransformResource_->GetGPUVirtualAddress());
+//         if (restartModel_) {
+//             restartModel_->DrawModel(
+//                 commandList,
+//                 TextureManager::GetInstance()->GetSrvHandleGPU("Restart.png"),
+//                 TextureManager::GetInstance()->GetSrvHandleGPU("test.dds")
+//             );
+//         }
+// 
+//         // Titlehe UIモデルを描画
+//         if (titleheTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, titleheTransformResource_->GetGPUVirtualAddress());
+//         if (titleheModel_) {
+//             titleheModel_->DrawModel(
+//                 commandList,
+//                 TextureManager::GetInstance()->GetSrvHandleGPU("Titlehe.png"),
+//                 TextureManager::GetInstance()->GetSrvHandleGPU("test.dds")
+//             );
+//         }
+// 
+        // ── 統一2D UIスプライト（GameOverロゴ、左右選択ボタン、下部PushSpace案内）描画 ──
+        if (graphicsPipeline_ && graphicsPipeline_->GetSpriteRootSignature() && graphicsPipeline_->GetSpritePipelineState()) {
+            commandList->SetGraphicsRootSignature(graphicsPipeline_->GetSpriteRootSignature());
+            commandList->SetPipelineState(graphicsPipeline_->GetSpritePipelineState());
 
-        // ── 【修正】UIモデルを描画する直前でアルファブレンド用パイプラインステートに切り替える ──
-        if (graphicsPipeline_ && graphicsPipeline_->GetObject3dBlendNormalPipelineState()) {
-            commandList->SetPipelineState(graphicsPipeline_->GetObject3dBlendNormalPipelineState());
-        }
+            float halfClientW = WinApp::kClientWidth / 2.0f;
+            float halfClientH = WinApp::kClientHeight / 2.0f;
+            Matrix4x4 projectionSprite = MakeOrthographicMatrix(-halfClientW, halfClientH, halfClientW, -halfClientH, 0.0f, 100.0f);
+            Matrix4x4 viewProjSprite = Multiply(MakeIdentity4x4(), projectionSprite);
 
-        // Restart UIモデルを描画
-        if (restartTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, restartTransformResource_->GetGPUVirtualAddress());
-        if (restartModel_) {
-            restartModel_->DrawModel(
-                commandList,
-                TextureManager::GetInstance()->GetSrvHandleGPU("Restart.png"),
-                TextureManager::GetInstance()->GetSrvHandleGPU("test.dds")
-            );
-        }
+            // スプライト中央配置描画ヘルパー
+            auto drawBtnSprite = [&](Sprite* sp, float cx, float cy, float w, float h, float rotZ, const Vector4& col) {
+                if (!sp || w <= 0.01f || h <= 0.01f || col.w <= 0.001f) return;
+                float cosR = std::cos(rotZ);
+                float sinR = std::sin(rotZ);
+                float tx = cx - (w * 0.5f) * cosR - (h * 0.5f) * sinR;
+                float ty = cy - (w * 0.5f) * sinR + (h * 0.5f) * cosR;
+                sp->transform.translate = { tx, ty, 0.0f };
+                sp->transform.scale = { w, -h, 1.0f };
+                sp->transform.rotate = { 0.0f, 0.0f, rotZ };
+                sp->SetColor(col);
+                sp->Draw(commandList, viewProjSprite);
+            };
 
-        // Titlehe UIモデルを描画
-        if (titleheTransformResource_) commandList->SetGraphicsRootConstantBufferView(1, titleheTransformResource_->GetGPUVirtualAddress());
-        if (titleheModel_) {
-            titleheModel_->DrawModel(
-                commandList,
-                TextureManager::GetInstance()->GetSrvHandleGPU("Titlehe.png"),
-                TextureManager::GetInstance()->GetSrvHandleGPU("test.dds")
-            );
-        }
+            // 遷移中のフェードアウト係数
+            float uiFade = 1.0f;
+            if (transitionPhase_ == TransitionPhase::kToTitle) {
+                uiFade = (std::max)(0.0f, 1.0f - (transitionTimer_ / kTransitionTime));
+            }
 
-        // 白フラッシュ用スプライトの描画 (画面全体を覆う)
-        if (whiteFlashSprite_) {
-            if (graphicsPipeline_ && graphicsPipeline_->GetSpriteRootSignature() && graphicsPipeline_->GetSpritePipelineState()) {
-                commandList->SetGraphicsRootSignature(graphicsPipeline_->GetSpriteRootSignature());
-                commandList->SetPipelineState(graphicsPipeline_->GetSpritePipelineState());
+            // 1. GAME OVER ロゴ（画面上部中央・ダーククリムゾン）
+            if (gameOverLogoSprite_) {
+                const float kLogoW = 580.0f;
+                const float kLogoH = 140.0f;
+                const float logoPosY = 180.0f; // 画面上部
+                float logoPulse = 1.0f + 0.015f * std::sin(animTimer_ * 3.0f);
+                Vector4 logoCol = { 1.0f, 1.0f, 1.0f, 1.0f * uiFade };
+                drawBtnSprite(gameOverLogoSprite_.get(), 0.0f, logoPosY, kLogoW * logoPulse, kLogoH * logoPulse, 0.0f, logoCol);
+            }
 
-                float halfClientW = WinApp::kClientWidth / 2.0f;
-                float halfClientH = WinApp::kClientHeight / 2.0f;
-                Matrix4x4 projectionSprite = MakeOrthographicMatrix(-halfClientW, halfClientH, halfClientW, -halfClientH, 0.0f, 100.0f);
-                Matrix4x4 viewProjSprite = Multiply(MakeIdentity4x4(), projectionSprite);
+            // 2. 左右選択ボタン (RESTART / TITLE)
+            // ユーザー要望：今の地点(-195)から上に上げて離す(-30付近、左右幅±320)
+            const float kBaseBtnW = 360.0f;
+            const float kBaseBtnH = 105.0f;
+            const float btnPosY   = -30.0f;  // 中央よりやや下（上に引き上げ）
+            const float leftBtnX  = -320.0f; // 左：RESTART（左右の間隔を離す）
+            const float rightBtnX =  320.0f; // 右：TITLE（左右の間隔を離す）
+
+            float pulse = 1.0f + 0.035f * std::sin(animTimer_ * 7.5f);
+
+            // 2-1. 左ボタン: RESTART（ゲーム再開）
+            if (restartSprite_) {
+                bool isSelected = (selection_ == Selection::kRestart);
+                float scale = isSelected ? (1.08f * pulse) : 0.92f;
+                Vector4 col = isSelected ? Vector4{ 1.0f, 1.0f, 1.0f, 1.0f * uiFade } : Vector4{ 0.38f, 0.40f, 0.44f, 0.55f * uiFade };
+                drawBtnSprite(restartSprite_.get(), leftBtnX, btnPosY, kBaseBtnW * scale, kBaseBtnH * scale, 0.0f, col);
+
+                // 選択中の場合、ボタンの両脇にひし形カーソルポインターを表示
+                if (isSelected && uiFade > 0.01f) {
+                    float diaShift = (kBaseBtnW * scale * 0.5f) + 24.0f + 4.0f * std::sin(animTimer_ * 10.0f);
+                    float diaSize = 16.0f;
+                    float diaRot = 3.14159265f * 0.25f;
+                    Vector4 diaCol = { 0.25f, 0.95f, 0.75f, 0.95f * uiFade };
+                    if (selectArrowSprites_[0]) drawBtnSprite(selectArrowSprites_[0].get(), leftBtnX - diaShift, btnPosY, diaSize, diaSize, diaRot, diaCol);
+                    if (selectArrowSprites_[1]) drawBtnSprite(selectArrowSprites_[1].get(), leftBtnX + diaShift, btnPosY, diaSize, diaSize, diaRot, diaCol);
+                }
+            }
+
+            // 2-2. 右ボタン: TITLE（タイトルへ戻る）
+            if (titleSprite_) {
+                bool isSelected = (selection_ == Selection::kTitlehe);
+                float scale = isSelected ? (1.08f * pulse) : 0.92f;
+                Vector4 col = isSelected ? Vector4{ 1.0f, 1.0f, 1.0f, 1.0f * uiFade } : Vector4{ 0.38f, 0.40f, 0.44f, 0.55f * uiFade };
+                drawBtnSprite(titleSprite_.get(), rightBtnX, btnPosY, kBaseBtnW * scale, kBaseBtnH * scale, 0.0f, col);
+
+                // 選択中の場合、ボタンの両脇にひし形カーソルポインターを表示
+                if (isSelected && uiFade > 0.01f) {
+                    float diaShift = (kBaseBtnW * scale * 0.5f) + 24.0f + 4.0f * std::sin(animTimer_ * 10.0f);
+                    float diaSize = 16.0f;
+                    float diaRot = 3.14159265f * 0.25f;
+                    Vector4 diaCol = { 1.0f, 0.85f, 0.30f, 0.95f * uiFade };
+                    if (selectArrowSprites_[2]) drawBtnSprite(selectArrowSprites_[2].get(), rightBtnX - diaShift, btnPosY, diaSize, diaSize, diaRot, diaCol);
+                    if (selectArrowSprites_[3]) drawBtnSprite(selectArrowSprites_[3].get(), rightBtnX + diaShift, btnPosY, diaSize, diaSize, diaRot, diaCol);
+                }
+            }
+
+            // 3. PUSH [ SPACE ] TO SELECT（画面最下部の案内テキスト）
+            if (pushSpaceSprite_) {
+                const float kSpaceW = 480.0f;
+                const float kSpaceH = 75.0f;
+                const float spacePosY = -260.0f; // 画面最下部付近
+                float spaceBlink = 0.70f + 0.30f * std::sin(animTimer_ * 4.0f);
+                Vector4 spaceCol = { 0.85f, 0.90f, 0.95f, spaceBlink * uiFade };
+                drawBtnSprite(pushSpaceSprite_.get(), 0.0f, spacePosY, kSpaceW, kSpaceH, 0.0f, spaceCol);
+            }
+
+            // 4. 白フラッシュスプライト（シーン遷移時の全画面フラッシュ）
+            if (whiteFlashSprite_) {
                 whiteFlashSprite_->Draw(commandList, viewProjSprite);
             }
         }
+        }
     }
-}

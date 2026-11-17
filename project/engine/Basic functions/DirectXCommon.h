@@ -1,7 +1,9 @@
-#pragma once
+﻿#pragma once
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl.h>
+#include <chrono>
+#include <thread>
 
 // 前方宣言
 class WinApp;
@@ -23,6 +25,10 @@ public:
 
     // 描画後処理
     void PostDraw();
+
+    // FPS固定用
+    void InitializeFixFPS();
+    void UpdateFixFPS();
 
     // ゲッター
     ID3D12Device* GetDevice() const { return device_.Get(); }
@@ -96,4 +102,7 @@ private:
 
 private:
     float clearColor_[4] = { 0.1f, 0.25f, 0.5f, 1.0f };
+
+    // FPS固定用時間記録
+    std::chrono::steady_clock::time_point referenceTime_;
 };

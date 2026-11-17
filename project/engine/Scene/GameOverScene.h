@@ -58,6 +58,13 @@ private:
     // 白フラッシュ用スプライト
     std::unique_ptr<Sprite> whiteFlashSprite_;
 
+    // 統一2D UIスプライト（GameOverロゴ、左右選択ボタン、下部PushSpace案内、カーソル）
+    std::unique_ptr<Sprite> gameOverLogoSprite_;
+    std::unique_ptr<Sprite> pushSpaceSprite_;
+    std::unique_ptr<Sprite> restartSprite_;
+    std::unique_ptr<Sprite> titleSprite_;
+    std::unique_ptr<Sprite> selectArrowSprites_[4];
+
     // 選択状態と遷移用変数
     enum class Selection {
         kRestart,
@@ -71,5 +78,6 @@ private:
     } transitionPhase_ = TransitionPhase::kNone;
 
     float transitionTimer_ = 0.0f;
+    float animTimer_ = 0.0f;
     const float kTransitionTime = 1.0f;
 };

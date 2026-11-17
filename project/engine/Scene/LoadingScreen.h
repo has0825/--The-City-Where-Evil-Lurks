@@ -182,7 +182,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> slashFighterCameraRes_;
     SlashCameraCB* slashFighterCameraData_ = nullptr;
 
-    ExitPattern exitPattern_ = ExitPattern::kMultiSlashGlassShatter;
+    ExitPattern exitPattern_ = ExitPattern::kReverseSlashSplitLeftRight;
     TransitionPhase phase_ = TransitionPhase::kSlashTitle;
     float phaseTimer_ = 0.0f;
     float time_ = 0.0f;

@@ -1,4 +1,4 @@
-#include "DirectXCommon.h"
+﻿#include "DirectXCommon.h"
 #include "WinApp.h"
 #include "D3D12Util.h" 
 #include <cassert>
@@ -68,6 +68,9 @@ void DirectXCommon::Initialize(WinApp* winApp) {
     scissorRect_.right = winApp->kClientWidth;
     scissorRect_.top = 0;
     scissorRect_.bottom = winApp->kClientHeight;
+
+    // FPS固定初期化
+    InitializeFixFPS();
 }
 
 void DirectXCommon::Finalize() {
@@ -150,6 +153,9 @@ void DirectXCommon::PostDraw() {
     assert(SUCCEEDED(hr));
     hr = commandList_->Reset(commandAllocator_.Get(), nullptr);
     assert(SUCCEEDED(hr));
+
+    // 60FPS固定処理
+    UpdateFixFPS();
 }
 
 void DirectXCommon::CreateDevice() {
@@ -292,4 +298,36 @@ void DirectXCommon::TransitionDepthStencilState(D3D12_RESOURCE_STATES newState) 
     commandList_->ResourceBarrier(1, &depthBarrier);
 
     depthStencilState_ = newState;
+}
+// ── FPS固定初期化 ──
+void DirectXCommon::InitializeFixFPS() {
+    referenceTime_ = std::chrono::steady_clock::now();
+}
+
+// ── FPS固定更新（1/60秒＝約16.666ms待機） ──
+void DirectXCommon::UpdateFixFPS() {
+    // 1/60秒（マイクロ秒単位: 16666.666...us = 16667us）
+    const std::chrono::microseconds kTargetDuration(1000000 / 60);
+
+    // 現在時間を取得
+    auto now = std::chrono::steady_clock::now();
+    // 前回記録からの経過時間を取得
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - referenceTime_);
+
+    // 1/60秒に満たない場合は待機
+    if (elapsed < kTargetDuration) {
+        // 残り時間が長い間は Sleep でCPU負荷を軽減（timeBeginPeriod(1)が有効なため1ms精度で動作）
+        while (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - referenceTime_) < kTargetDuration) {
+            auto remaining = kTargetDuration - std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - referenceTime_);
+            if (remaining > std::chrono::microseconds(2000)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            } else {
+                // 残り2ms未満はスピンウェイトでマイクロ秒精度の確実な60FPS固定を行う
+                std::this_thread::yield();
+            }
+        }
+    }
+
+    // 次回フレームの基準時間を更新
+    referenceTime_ = std::chrono::steady_clock::now();
 }
