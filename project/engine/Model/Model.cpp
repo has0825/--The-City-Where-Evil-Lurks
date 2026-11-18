@@ -8,6 +8,7 @@
 #include <assimp/postprocess.h>
 #include "SrvManager.h"
 #include "GraphicsPipeline.h"
+#include "WinApp.h"
 
 void Model::ReadNodeHierarchy(aiNode* node, Node& outNode) {
     aiMatrix4x4 aiLocalMatrix = node->mTransformation;
@@ -184,6 +185,7 @@ struct GLTFCacheData {
 static std::map<std::string, GLTFCacheData> s_GLTFCache;
 
 std::unique_ptr<Model> Model::LoadGLTF(const std::string& filename, ID3D12Device* device) {
+    WinApp::GetInstance()->ProcessMessage();
     std::unique_ptr<Model> model = std::make_unique<Model>();
 
     // キャッシュを検索
@@ -196,6 +198,7 @@ std::unique_ptr<Model> Model::LoadGLTF(const std::string& filename, ID3D12Device
             model->animation_ = std::make_unique<Animation>(*cache.animation);
         }
         model->Initialize(cache.modelData, device);
+        WinApp::GetInstance()->ProcessMessage();
         return model;
     }
 
@@ -205,6 +208,7 @@ std::unique_ptr<Model> Model::LoadGLTF(const std::string& filename, ID3D12Device
     // aiProcess_PreTransformVertices を削除し、ボーン構造を維持する
     const aiScene* scene = importer.ReadFile(filename,
         aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_LimitBoneWeights | aiProcess_ConvertToLeftHanded | aiProcess_PopulateArmatureData);
+    WinApp::GetInstance()->ProcessMessage();
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
         std::string errorMsg = "Assimp Error: " + std::string(importer.GetErrorString()) + "\n";
@@ -219,6 +223,7 @@ std::unique_ptr<Model> Model::LoadGLTF(const std::string& filename, ID3D12Device
     // メッシュの解析
     uint32_t vertexOffset = 0;
     for (unsigned int i = 0; i < scene->mNumMeshes; i++) {
+        WinApp::GetInstance()->ProcessMessage();
         aiMesh* mesh = scene->mMeshes[i];
         
         // 頂点ごとのウェイト情報を一時保存

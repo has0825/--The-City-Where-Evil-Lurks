@@ -8,6 +8,7 @@
 #include <cctype>
 #include <Windows.h>
 #include "SrvManager.h"
+#include "WinApp.h"
 #include <sstream>
 
 // stringからwstringへの変換ヘルパー
@@ -50,6 +51,7 @@ void TextureManager::LoadTexture(const std::string& fileName) {
     if (textureDatas_.contains(fileName)) {
         return;
     }
+    WinApp::GetInstance()->ProcessMessage();
 
     std::string fullPath = directoryPath_ + fileName;
     std::wstring filePathW = ConvertString(fullPath);
@@ -63,6 +65,7 @@ void TextureManager::LoadTexture(const std::string& fileName) {
     } else {
         hr = DirectX::LoadFromWICFile(filePathW.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, nullptr, image);
     }
+    WinApp::GetInstance()->ProcessMessage();
 
     if (FAILED(hr)) {
         std::string errMsg = "Texture File Not Found or Load Failed! Path: " + fullPath + "\n";

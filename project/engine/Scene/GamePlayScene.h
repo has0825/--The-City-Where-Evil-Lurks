@@ -572,6 +572,8 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D12Resource> bossLegTransformResources_[8];
     TransformationMatrix* bossLegTransformData_[8] = { nullptr };
+    Microsoft::WRL::ComPtr<ID3D12Resource> bossLightResource_;
+    DirectionalLight* bossLightData_ = nullptr;
 
     // 蜘蛛ボス調整パラメータ (ImGuiで調整可能)
     float bossScale_ = 4.5f;           // 全体の基本スケール

@@ -65,15 +65,14 @@ void WinApp::Finalize() {
 
 bool WinApp::ProcessMessage() {
     MSG msg{};
-    // メッセージキューからメッセージを取得
-    if (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+    // メッセージキューに溜まっているメッセージをすべて処理し、重いロード中の「応答なし」を防止する
+    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+        if (msg.message == WM_QUIT) {
+            endRequest_ = true;
+            break;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
-    }
-
-    // 終了メッセージが来たらフラグを立てる
-    if (msg.message == WM_QUIT) {
-        endRequest_ = true;
     }
 
     return endRequest_;

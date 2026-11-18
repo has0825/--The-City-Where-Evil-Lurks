@@ -814,6 +814,17 @@ void GamePlayScene::Initialize() {
         bossLegTransformData_[i]->color = { 1.0f, 1.0f, 1.0f, 1.0f };
     }
 
+    // ボス胴体専用ライト（目の赤色発光＆撃破時の機能停止消灯用）
+    bossLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
+    bossLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&bossLightData_));
+    if (directionalLightData_) {
+        *bossLightData_ = *directionalLightData_;
+    } else {
+        *bossLightData_ = {};
+    }
+    bossLightData_->enableNightEmissive = 3;
+    bossLightData_->emissiveIntensity = 1.0f;
+
     // 蜘蛛の巣テクスチャのロードとSRV取得
     TextureManager::GetInstance()->LoadTexture("spider web.png");
     spiderWebSrvHandleGPU_ = TextureManager::GetInstance()->GetSrvHandleGPU("spider web.png");
@@ -1595,6 +1606,7 @@ void GamePlayScene::Initialize() {
     }
 
     // ── 街灯 (Street Lamp) を全ステージ（Phase2以降も含む）の道路（十字路・ビル敷地以外）の歩行者通路側（側辺）に等間隔配置 ──
+    WinApp::GetInstance()->ProcessMessage();
     streetLamps_.clear();
     for (int i = 0; i < numLoadedFloors_; ++i) {
         if (floorPositions_[i].y < -5000.0f) continue;
@@ -5702,6 +5714,22 @@ void GamePlayScene::Update() {
                 *streetLampLightData_ = *directionalLightData_;
                 streetLampLightData_->enableNightEmissive = 2;
             }
+            if (bossLightData_) {
+                *bossLightData_ = *directionalLightData_;
+                bossLightData_->enableNightEmissive = 3;
+                if (isBossDefeatedSequence_ && hasHitBoss_) {
+                    // 機能停止に伴い、電圧低下による不安定な明滅を挟みながらボスの目を徐々に消灯する
+                    float fadeOut = 1.0f - std::clamp(bossDefeatHitTimer_ / 2.2f, 0.0f, 1.0f);
+                    float flicker = 1.0f;
+                    if (bossDefeatHitTimer_ > 0.25f && bossDefeatHitTimer_ < 1.85f) {
+                        float wave = std::sin(bossDefeatHitTimer_ * 42.0f) * std::cos(bossDefeatHitTimer_ * 17.0f);
+                        flicker = (wave < -0.35f) ? 0.25f : 1.0f;
+                    }
+                    bossLightData_->emissiveIntensity = fadeOut * flicker;
+                } else {
+                    bossLightData_->emissiveIntensity = 1.0f;
+                }
+            }
         }
     }
 
@@ -6882,8 +6910,9 @@ void GamePlayScene::Draw() {
                     if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
                     if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
 
-                    // 胴体の描画 (常にオリジナル高画質モデルを使用)
+                    // 胴体の描画 (常にオリジナル高画質モデルを使用、目発光・消灯用ライト適用)
                     if (bossBodyModel_ && bossBodyTransformResource_) {
+                        if (bossLightResource_) commandList->SetGraphicsRootConstantBufferView(4, bossLightResource_->GetGPUVirtualAddress());
                         commandList->SetGraphicsRootConstantBufferView(1, bossBodyTransformResource_->GetGPUVirtualAddress());
                         bossBodyModel_->DrawModel(
                             commandList,
@@ -6892,7 +6921,8 @@ void GamePlayScene::Draw() {
                         );
                     }
 
-                    // 足の描画（常にオリジナル高画質モデルを使用 ＆ バインドを1回に集約して高速化）
+                    // 足の描画（標準ライトに戻し、オリジナル高画質モデルを使用 ＆ バインドを1回に集約して高速化）
+                    if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
                     if (bossLegModel_) {
                         D3D12_VERTEX_BUFFER_VIEW vbView = bossLegModel_->GetVertexBufferView();
                         D3D12_INDEX_BUFFER_VIEW ibView = bossLegModel_->GetIndexBufferView();
