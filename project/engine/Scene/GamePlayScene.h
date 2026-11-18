@@ -419,6 +419,11 @@ private:
     struct StreetLampInstance {
         Vector3 position;
         Vector3 lightPos;
+        Vector3 velocity = { 0.0f, 0.0f, 0.0f };
+        Vector3 rotation = { 0.0f, 0.0f, 0.0f };
+        Vector3 angVel   = { 0.0f, 0.0f, 0.0f };
+        bool isBlown = false;
+        bool isGone  = false;
     };
     std::unique_ptr<Model> streetLampModel_;
     std::unique_ptr<Model> streetLampLodModel_;
@@ -475,6 +480,17 @@ private:
     int activeBackgroundTex_ = 0;  // 0: Green(haikei/Green.png), 1: Red(haikei/Red.png)
     float bgUvScrollX_ = 0.0f;     // X方向UVスクロール量（天球内側での雲の流れ）
     float bgUvScrollY_ = 0.0f;     // Y方向UVスクロール量
+
+    // 夜空・雲背景用（クリア画面と共通のNightSkyシェーダー）
+    struct NightSkyCB {
+        float time;
+        float aspectRatio;
+        float camYaw;
+        float camPitch;
+    };
+    Microsoft::WRL::ComPtr<ID3D12Resource> nightSkyResource_;
+    NightSkyCB* nightSkyData_ = nullptr;
+    float nightSkyTime_ = 0.0f;
 
     void DrawSkeleton(const AdvAnim::Skeleton& skeleton, const Matrix4x4& baseWorldMatrix);
     

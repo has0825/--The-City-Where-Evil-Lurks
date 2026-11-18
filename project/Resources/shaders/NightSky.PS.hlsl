@@ -6,7 +6,8 @@ struct VertexShaderOutput {
 struct NightSkyParams {
     float time;
     float aspectRatio;
-    float2 padding;
+    float camYaw;
+    float camPitch;
 };
 
 ConstantBuffer<NightSkyParams> gParams : register(b0);
@@ -159,12 +160,27 @@ PixelShaderOutput main(VertexShaderOutput input) {
     PixelShaderOutput output;
 
     float2 uv = input.texcoord;
-    float heightFactor = 1.0 - uv.y; // 0: 画面下(地平線側), 1: 画面上(天頂側)
     float2 p = float2((uv.x - 0.5) * gParams.aspectRatio, 0.5 - uv.y);
 
-    // 視線方向ベクトル（3Dの空の奥行き計算用）
-    // カメラがほぼ水平〜わずかに上を向いている想定
-    float3 rayDir = normalize(float3(p.x, p.y + 0.14, 1.05));
+    // カメラ空間の視線ベクトルをピッチ・ヨー回転してワールド空間の視線ベクトルに変換
+    float3 rawDir = normalize(float3(p.x, p.y + 0.14, 1.05));
+    float cPitch = cos(gParams.camPitch);
+    float sPitch = sin(gParams.camPitch);
+    float3 pitchedDir = float3(
+        rawDir.x,
+        rawDir.y * cPitch - rawDir.z * sPitch,
+        rawDir.y * sPitch + rawDir.z * cPitch
+    );
+    float cYaw = cos(gParams.camYaw);
+    float sYaw = sin(gParams.camYaw);
+    float3 rayDir = normalize(float3(
+        pitchedDir.x * cYaw - pitchedDir.z * sYaw,
+        pitchedDir.y,
+        pitchedDir.x * sYaw + pitchedDir.z * cYaw
+    ));
+
+    float heightFactor = saturate((rayDir.y + 0.30) / 0.80); // 0: 地平線側, 1: 天頂側
+    float2 skyP = float2(atan2(rayDir.x, rayDir.z), asin(clamp(rayDir.y, -0.999, 0.999)) - 0.13);
 
     // 1. 夜空のベースグラデーション（天頂に向かって深く暗く落ちていくグラデーション）
     float3 zenithColor  = float3(0.00025, 0.0006, 0.0035); // 天頂：漆黒に近い極深の紺
@@ -181,7 +197,7 @@ PixelShaderOutput main(VertexShaderOutput input) {
     skyColor *= topDarken;
 
     // 2. 天の川 (Milky Way)
-    float2 mwUV = float2(p.x * 0.75 + p.y * 0.65, -p.x * 0.65 + p.y * 0.75);
+    float2 mwUV = float2(skyP.x * 0.75 + skyP.y * 0.65, -skyP.x * 0.65 + skyP.y * 0.75);
     float mwBand = exp(-pow((mwUV.y - 0.05 + sin(mwUV.x * 2.2) * 0.06) * 4.4, 2.0));
     float mwNoise = Fbm5(mwUV * 3.8 + float2(2.4, 1.1));
     float mwDust  = Fbm5(mwUV * 7.5 + float2(8.3, 4.7));
@@ -193,7 +209,7 @@ PixelShaderOutput main(VertexShaderOutput input) {
 
     // 3. 星空 (複数レイヤー + ゆっくりした日周運動 + 瞬き)
     float starVisibility = smoothstep(0.02, 0.25, heightFactor);
-    float2 starCoord = p + float2(gParams.time * 0.0014, gParams.time * 0.00035);
+    float2 starCoord = skyP + float2(gParams.time * 0.0014, gParams.time * 0.00035);
 
     float3 stars = float3(0.0, 0.0, 0.0);
     stars += StarLayer(starCoord, 44.0, gParams.time, 0.72, 0.0) * (0.28 + mwIntensity * 0.65);
@@ -203,72 +219,49 @@ PixelShaderOutput main(VertexShaderOutput input) {
     skyColor += stars * starVisibility;
 
     // 4. 流れ星
-    skyColor += ShootingStar(p, gParams.time) * starVisibility;
+    skyColor += ShootingStar(skyP, gParams.time) * starVisibility;
 
-    // 5. 月 (右上・CLEARロゴや飛行機の軌道を邪魔しない位置)
-    float2 moonPos = float2(0.58, 0.28);
-    float moonRadius = 0.052;
-    float moonDist = length(p - moonPos);
-
-    // 月の大気散乱ハロー
-    float moonHalo1 = exp(-moonDist * 11.5) * 0.090;
-    float moonHalo2 = exp(-moonDist * 3.8)  * 0.020;
-    skyColor += float3(0.26, 0.40, 0.72) * moonHalo1 + float3(0.06, 0.12, 0.30) * moonHalo2;
-
-    float moonMask = smoothstep(moonRadius + 0.0022, moonRadius - 0.0015, moonDist);
-    if (moonMask > 0.0) {
-        float2 moonLocal = (p - moonPos) / moonRadius;
-        float z = sqrt(max(0.0, 1.0 - dot(moonLocal, moonLocal)));
-        float limbDarkening = lerp(0.72, 1.0, pow(z, 0.45));
-
-        float craterNoise = Fbm5(moonLocal * 3.4 + float2(3.2, 6.1));
-        float detailNoise = Noise(moonLocal * 9.5 + float2(1.7, 2.3));
-        float maria = smoothstep(0.35, 0.75, craterNoise * 0.75 + detailNoise * 0.25);
-        float3 moonSurface = lerp(float3(0.55, 0.58, 0.64), float3(0.96, 0.94, 0.88), maria);
-
-        float shade = saturate(dot(normalize(float3(moonLocal, z)), normalize(float3(-0.25, 0.2, 0.95))));
-        moonSurface *= (0.45 + 0.55 * shade) * limbDarkening;
-
-        skyColor = lerp(skyColor, moonSurface * 1.15, moonMask);
-    }
+    // 5. 月は描画せず、雲のライティング基準方向のみ定義
+    float3 moonDir = normalize(float3(0.58, 0.42, 1.05));
+    float moonAngleDist = acos(clamp(dot(rayDir, moonDir), -1.0, 1.0));
 
     // 6. 透視投影によるリアルな夜の雲 (2レイヤー・パララックス移動・月光ライティング)
     // 空の上向き成分が正の領域で、雲平面への射影座標を求める
     float projY = max(rayDir.y + 0.06, 0.08);
-    float distanceFade = smoothstep(0.08, 0.28, rayDir.y + 0.06); // 地平線ギリギリは霞に溶ける
+    float distanceFade = smoothstep(0.01, 0.16, rayDir.y + 0.06); // 地平線ギリギリは霞に溶ける
 
-    // --- 奥の高層薄雲 (巻雲・うろこ雲風、ゆっくり移動) ---
-    float2 highCloudUV = rayDir.xz / (projY * 1.25) * 1.6;
+    // --- 奥の高層薄雲 (空全体に大きく広がる薄雲) ---
+    float2 highCloudUV = rayDir.xz / (projY * 1.25) * 1.75;
     highCloudUV += float2(gParams.time * 0.012, gParams.time * 0.004);
     float highDensity = CloudDensity(highCloudUV + float2(12.3, 4.1), gParams.time * 0.5);
-    float highAlpha = smoothstep(0.48, 0.80, highDensity) * 0.42 * distanceFade;
+    float highAlpha = smoothstep(0.20, 0.56, highDensity) * 0.68 * distanceFade;
 
-    float moonScatter = exp(-moonDist * 3.2);
-    float3 highCloudCol = lerp(float3(0.005, 0.011, 0.028), float3(0.065, 0.095, 0.18), moonScatter);
+    float moonScatter = exp(-moonAngleDist * 3.2);
+    float3 highCloudCol = lerp(float3(0.012, 0.022, 0.052), float3(0.095, 0.135, 0.24), moonScatter);
     skyColor = lerp(skyColor, highCloudCol, highAlpha);
 
-    // --- 手前の低層立体雲 (月明かりの陰影・シルバーライニング付き) ---
-    float2 lowCloudUV = rayDir.xz / projY * 1.15;
+    // --- 手前の低層立体雲 (空を覆う豊かな立体雲) ---
+    float2 lowCloudUV = rayDir.xz / projY * 1.45;
     lowCloudUV += float2(-gParams.time * 0.024, gParams.time * 0.006); // 少しずつ動いて見える速度
 
     float lowRaw = CloudDensity(lowCloudUV, gParams.time);
-    float lowAlpha = smoothstep(0.46, 0.72, lowRaw) * 0.82 * distanceFade;
+    float lowAlpha = smoothstep(0.22, 0.52, lowRaw) * 0.94 * distanceFade;
 
     if (lowAlpha > 0.001) {
         // 月の方向へ少しオフセットして雲の厚みの差(光の透過・輪郭の輝き)を計算
-        float2 toMoon = normalize(moonPos - p + float2(0.0001, 0.0001));
-        float2 sampleDir = normalize(float2(toMoon.x, -toMoon.y)) * 0.08;
+        float2 toMoon = normalize(moonDir.xz - rayDir.xz + float2(0.0001, 0.0001));
+        float2 sampleDir = toMoon * 0.08;
         float shadowRaw = CloudDensity(lowCloudUV + sampleDir, gParams.time);
 
         // 光の当たり具合: 手前が薄く、月側に向かって開けているほど明るい
-        float lightDiff = saturate((lowRaw - shadowRaw) * 3.5 + 0.45);
+        float lightDiff = saturate((lowRaw - shadowRaw) * 3.8 + 0.48);
         // 雲の薄い縁が月光で銀色に光る (シルバーライニング)
-        float edgeGlow = smoothstep(0.46, 0.56, lowRaw) * (1.0 - smoothstep(0.56, 0.72, lowRaw));
-        float silverLining = edgeGlow * exp(-moonDist * 2.4) * 1.6;
+        float edgeGlow = smoothstep(0.22, 0.35, lowRaw) * (1.0 - smoothstep(0.35, 0.54, lowRaw));
+        float silverLining = edgeGlow * exp(-moonAngleDist * 2.2) * 1.65;
 
         // 雲の暗い底色 〜 月光に照らされた表層色
-        float3 cloudDark = float3(0.0025, 0.0055, 0.016);
-        float3 cloudLit  = lerp(float3(0.014, 0.026, 0.062), float3(0.11, 0.16, 0.28), exp(-moonDist * 2.6));
+        float3 cloudDark = float3(0.005, 0.010, 0.028);
+        float3 cloudLit  = lerp(float3(0.032, 0.054, 0.115), float3(0.15, 0.22, 0.36), exp(-moonAngleDist * 2.4));
         float3 lowCloudCol = lerp(cloudDark, cloudLit, lightDiff);
         lowCloudCol += float3(0.22, 0.30, 0.48) * silverLining;
 

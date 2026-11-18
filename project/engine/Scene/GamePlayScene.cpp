@@ -129,7 +129,7 @@ void GamePlayScene::Initialize() {
     replaySessionIndex_ = 0;
 
     // クリアカラーのリセット (デフォルトの青緑系に戻す)
-    DirectXCommon::GetInstance()->SetClearColor(0.1f, 0.25f, 0.5f, 1.0f);
+    DirectXCommon::GetInstance()->SetClearColor(0.002f, 0.004f, 0.015f, 1.0f);
 
     // プレイヤーパラメータをファイルから読み込む
     std::ifstream paramFile("Resources/player_params.txt");
@@ -649,6 +649,15 @@ void GamePlayScene::Initialize() {
     activeBackgroundTex_ = 0;
     bgUvScrollX_ = 0.0f;
     bgUvScrollY_ = 0.0f;
+
+    // 夜空・雲背景用定数バッファの作成（クリア画面と共通のNightSkyシェーダー）
+    nightSkyResource_ = CreateBufferResource(device, sizeof(NightSkyCB));
+    nightSkyResource_->Map(0, nullptr, reinterpret_cast<void**>(&nightSkyData_));
+    nightSkyTime_ = 0.0f;
+    nightSkyData_->time = 0.0f;
+    nightSkyData_->aspectRatio = static_cast<float>(WinApp::kClientWidth) / static_cast<float>(WinApp::kClientHeight);
+    nightSkyData_->camYaw = 0.0f;
+    nightSkyData_->camPitch = 0.0f;
 
     // レティクル(エイミング)用バッファ
     aimingInstancingResource_ = CreateBufferResource(device, sizeof(ParticleForGPU));
@@ -2039,9 +2048,9 @@ void GamePlayScene::Update() {
                 outDir.z * outSpeed + (dist01(randomEngine_) - 0.5f) * 6.0f
             };
             bossLegDebris_[li].angVel = {
-                (dist01(randomEngine_) - 0.5f) * 5.0f,
-                (dist01(randomEngine_) - 0.5f) * 5.0f,
-                (dist01(randomEngine_) - 0.5f) * 5.0f
+                (dist01(randomEngine_) - 0.5f) * 1.4f,
+                (dist01(randomEngine_) - 0.5f) * 3.8f,
+                (dist01(randomEngine_) - 0.5f) * 1.4f
             };
         }
         
@@ -2194,7 +2203,7 @@ void GamePlayScene::Update() {
                 if (bossDefeatHitTimer_ < part.detachTime) {
                     // 分離前：膝から崩れ落ちるように沈み込み・前傾しつつ微かに機能停止の振動
                     if (isBody) {
-                        part.offset.y = -11.0f * easeKneel;
+                        part.offset.y = -9.5f * easeKneel;
                         part.rotAngle.x = 0.35f * easeKneel;
                     } else {
                         Vector3 outDir = Subtract(part.initialPos, bossPos);
@@ -2203,9 +2212,9 @@ void GamePlayScene::Update() {
                         if (outLen > 0.01f) {
                             outDir = Scale(outDir, 1.0f / outLen);
                         }
-                        part.offset.x = outDir.x * 3.5f * easeKneel;
-                        part.offset.z = outDir.z * 3.5f * easeKneel;
-                        part.offset.y = -6.5f * easeKneel;
+                        part.offset.x = outDir.x * 4.0f * easeKneel;
+                        part.offset.z = outDir.z * 4.0f * easeKneel;
+                        part.offset.y = -1.5f * easeKneel;
                     }
 
                     float jitterAmp = isBody ? 0.18f : 0.25f;
@@ -2276,9 +2285,9 @@ void GamePlayScene::Update() {
                 cbData->World = Multiply(part.initialWorld, deltaWorld);
             };
 
-            updatePartPhysics(bossBodyDebris_, bossBodyTransformData_, kFloorY + 6.5f, 0.18f, 46.0f, true);
+            updatePartPhysics(bossBodyDebris_, bossBodyTransformData_, kFloorY + 8.5f, 0.18f, 46.0f, true);
             for (int li = 0; li < 8; ++li) {
-                updatePartPhysics(bossLegDebris_[li], bossLegTransformData_[li], kFloorY + 1.8f, 0.28f, 42.0f, false);
+                updatePartPhysics(bossLegDebris_[li], bossLegTransformData_[li], kFloorY + 12.5f, 0.28f, 42.0f, false);
             }
 
             // 機能停止後の余韻：壊れた胴体や脚から最後の微かなショート火花
@@ -4361,8 +4370,18 @@ void GamePlayScene::Update() {
                     bossHP_ -= 4.0f;
                     if (bossHP_ < 0.0f) bossHP_ = 0.0f;
 
-                    // 被弾エフェクトとSE
-                    EmitHitEffect(playerBullets_[i].position);
+                    // 巨大な蜘蛛の装甲への着弾爆破エフェクトとSE
+                    if (particleManager_) {
+                        const Vector3& hitPos = playerBullets_[i].position;
+                        particleManager_->EmitFlame(hitPos, 28.0f, 16, { 1.0f, 0.35f, 0.05f });
+                        particleManager_->EmitFlame(hitPos, 12.0f, 8, { 1.0f, 0.85f, 0.35f });
+                        particleManager_->EmitCustomSparks(hitPos, 125.0f, 26, { 1.0f, 0.68f, 0.18f }, 2.2f);
+                        particleManager_->EmitRing(hitPos, { 1.0f, 0.45f, 0.10f });
+                    }
+                    cameraShakeTimer_ = 0.08f;
+                    cameraShakeIntensity_ = 1.5f;
+                    activeShakeIntensity_ = 1.5f;
+                    cameraShakeTimeMax_ = 0.08f;
                     PlaySE(jumpSE_, false, 1.2f);
                 }
             }
@@ -4396,13 +4415,19 @@ void GamePlayScene::Update() {
 
                             // 全滅リポップはUpdateの最後で一括判定するため、ここではリポップ処理を行わない
 
-                            // ★★★ 超ド派手爆破エフェクト！ ★★★
-                            EmitHitEffect(deathPos);
-                            // プリセット5(氷結)・8(神聖)以外のときは属性色のシリンダーとリングを重ね合わせて撃破を強調
-                            if (selectedEffectPreset_ != 5 && selectedEffectPreset_ != 8) {
-                                particleManager_->EmitCylinder(deathPos, effectBaseColor_);
-                                particleManager_->EmitRing(deathPos, effectBaseColor_);
+                            // ★★★ リアルな爆破炎上エフェクト！ ★★★
+                            if (particleManager_) {
+                                particleManager_->EmitFlame(deathPos, 35.0f, 22, { 1.0f, 0.32f, 0.04f });
+                                particleManager_->EmitFlame(deathPos, 14.0f, 12, { 1.0f, 0.88f, 0.45f });
+                                particleManager_->EmitCustomSparks(deathPos, 135.0f, 30, { 1.0f, 0.60f, 0.15f }, 1.8f);
+                                particleManager_->EmitCustomSparks(deathPos, 80.0f, 18, { 0.95f, 0.18f, 0.04f }, 2.4f);
+                                particleManager_->EmitMegaRing(deathPos, { 1.0f, 0.45f, 0.12f });
+                                particleManager_->EmitCylinder(deathPos, { 1.0f, 0.30f, 0.05f });
                             }
+                            cameraShakeTimer_ = 0.14f;
+                            cameraShakeIntensity_ = 2.2f;
+                            activeShakeIntensity_ = 2.2f;
+                            cameraShakeTimeMax_ = 0.14f;
 
                             // 爆破音を再生
                             PlaySE(jumpSE_, false, 1.5f);
@@ -4512,6 +4537,8 @@ void GamePlayScene::Update() {
 
                 Vector3 warningPos = Add(targetRailPos, Add(Scale(targetRailRight, targetX), Scale(targetRailUp, targetRelY)));
                 particleManager_->EmitLightning(warningPos, 5.0f, 1, lightningColor);
+                particleManager_->EmitChaosVoid(warningPos, 22.0f, 2, { 0.55f, 0.04f, 0.85f });
+                particleManager_->EmitGravityVortex(currentBossPos, 25.0f, 2, { 0.75f, 0.05f, 0.18f });
 
             } else if (bossActionTimer_ <= 5.3f) {
                 // 2. 振り下ろし叩きつけ (5.0〜5.3秒)
@@ -4536,6 +4563,8 @@ void GamePlayScene::Update() {
                 Vector3 warningPos = Add(targetRailPos, Add(Scale(targetRailRight, targetX), Scale(targetRailUp, targetRelY)));
                 particleManager_->EmitLightning(currentBossPos, 12.0f, 2, lightningColor);
                 particleManager_->EmitLightning(warningPos, 12.0f, 2, lightningColor);
+                particleManager_->EmitChaosVoid(currentBossPos, 38.0f, 4, { 0.60f, 0.05f, 0.90f });
+                particleManager_->EmitChaosVoid(warningPos, 35.0f, 4, { 0.85f, 0.06f, 0.22f });
 
             } else if (bossActionTimer_ <= 6.8f) {
                 // 3. 戻り (5.3〜6.8秒)
@@ -4600,13 +4629,18 @@ void GamePlayScene::Update() {
                         debrisEmitPos_ = Add(targetRailPos, Scale(targetRailRight, targetX));
                         debrisEmitCount_ = 30000;
 
-                        // 極太の主幹雷撃(1.6fスケール)を走らせる
+                        // 極太の主幹雷撃(1.6fスケール)＋禍々しい紫黒・深紅の闇雷撃を走らせる
                         particleManager_->EmitLSystemLightning(lightningStart, impactPos, 4, 1.6f, lightningColor);
+                        particleManager_->EmitLSystemLightning(lightningStart, impactPos, 3, 1.1f, { 0.85f, 0.08f, 0.35f });
 
-                        // 周囲の爆発エフェクトと大音響SE
-                        particleManager_->EmitCylinder(impactPos, lightningColor);
-                        particleManager_->EmitRing(impactPos, lightningColor);
-                        particleManager_->EmitCustomSparks(impactPos, 25.0f, 15, { 0.5f, 0.5f, 0.5f }, 1.0f);
+                        // 禍々しいカオス瘴気・紅蓮の爆炎・巨大衝撃波と大音響SE
+                        particleManager_->EmitChaosVoid(impactPos, 55.0f, 28, { 0.60f, 0.04f, 0.90f });
+                        particleManager_->EmitGravityVortex(impactPos, 40.0f, 18, { 0.85f, 0.05f, 0.22f });
+                        particleManager_->EmitLightning(impactPos, 75.0f, 22, { 1.0f, 0.10f, 0.28f });
+                        particleManager_->EmitFlame(impactPos, 45.0f, 18, { 0.95f, 0.12f, 0.18f });
+                        particleManager_->EmitMegaRing(impactPos, { 0.75f, 0.08f, 0.92f });
+                        particleManager_->EmitCylinder(impactPos, { 0.90f, 0.08f, 0.25f });
+                        particleManager_->EmitCustomSparks(impactPos, 110.0f, 26, { 1.0f, 0.25f, 0.45f }, 1.6f);
                         PlaySE(jumpSE_, false, 1.7f);
 
                         // ダメージ判定
@@ -4708,6 +4742,8 @@ void GamePlayScene::Update() {
                     };
                     
                     particleManager_->EmitLaserThread(bossWebFirePos, fighterWorldPos);
+                    particleManager_->EmitChaosVoid(bossWebFirePos, 38.0f, 6, { 0.65f, 0.05f, 0.90f });
+                    particleManager_->EmitCustomSparks(bossWebFirePos, 70.0f, 6, { 1.0f, 0.15f, 0.35f }, 0.4f);
                     PlaySE(jumpSE_, false, 0.3f);
                 }
             } else {
@@ -4745,7 +4781,12 @@ void GamePlayScene::Update() {
                     }
                     float speed = 100.0f; // 中速
                     web.velocity = { dir.x * speed, dir.y * speed, dir.z * speed };
-                    
+
+                    if (particleManager_) {
+                        particleManager_->EmitChaosVoid(bossWebFirePos, 50.0f, 18, { 0.55f, 0.04f, 0.85f });
+                        particleManager_->EmitFlame(bossWebFirePos, 35.0f, 12, { 0.90f, 0.08f, 0.28f });
+                        particleManager_->EmitRing(bossWebFirePos, { 0.75f, 0.06f, 0.90f });
+                    }
                     PlaySE(jumpSE_, false, 1.4f);
                     break;
                 }
@@ -5606,6 +5647,15 @@ void GamePlayScene::Update() {
             cameraDataCB_->worldPosition = camTrans.translate;
         }
 
+        // 夜空・雲背景用定数バッファ更新
+        nightSkyTime_ += kDeltaTime;
+        if (nightSkyData_) {
+            nightSkyData_->time = nightSkyTime_;
+            nightSkyData_->aspectRatio = static_cast<float>(WinApp::kClientWidth) / static_cast<float>(WinApp::kClientHeight);
+            nightSkyData_->camYaw = camTrans.rotate.y;
+            nightSkyData_->camPitch = camTrans.rotate.x;
+        }
+
         // 夜ステージ用：自機前方（カメラ基準の前方斜め下）を照らすヘッドライトを更新
         if (directionalLightData_) {
             Vector3 railPos = GetRailPosition(fighterWorldZ_);
@@ -5627,6 +5677,7 @@ void GamePlayScene::Update() {
                 std::vector<LampDist> nearLamps;
                 nearLamps.reserve(64);
                 for (int li = 0; li < static_cast<int>(streetLamps_.size()); ++li) {
+                    if (streetLamps_[li].isBlown) continue;
                     float dx = streetLamps_[li].lightPos.x - railPos.x;
                     float dz = streetLamps_[li].lightPos.z - railPos.z;
                     float d2 = dx * dx + dz * dz;
@@ -6163,15 +6214,84 @@ void GamePlayScene::Update() {
                 }
             }
 
-            // 街灯 (Street Lamp) の WVP 行列更新
+            // 街灯 (Street Lamp) のボス接触吹き飛ばし＆ WVP 行列更新
             if (streetLampModel_ && !streetLamps_.empty()) {
                 const Matrix4x4 lampScale = Matrix4x4MakeScaleMatrix({ 14.0f, 14.0f, 14.0f });
+                constexpr float kLampDt = 1.0f / 60.0f;
+                constexpr float kLampBlowRadiusSq = 44.0f * 44.0f;
+
+                bool canBossBlowLamps = (!isTitleMode_ && isBossModelVisible_ && !isBossDefeatedSequence_ &&
+                    (currentPhase_ == GamePhase::kBossFight || bossAppearanceTimer_ > 0.0f));
+                Vector3 bossNowPos = GetBossPosition(0.0f);
+                if (bossBodyTransformData_) {
+                    bossNowPos = {
+                        bossBodyTransformData_->World.m[3][0],
+                        bossBodyTransformData_->World.m[3][1],
+                        bossBodyTransformData_->World.m[3][2]
+                    };
+                }
+                std::uniform_real_distribution<float> lampDist01(0.0f, 1.0f);
+
                 for (int i = 0; i < static_cast<int>(streetLamps_.size()) && i < kMaxStreetLamps; ++i) {
-                    float dx = streetLamps_[i].position.x - camX;
-                    float dz = streetLamps_[i].position.z - camZ;
-                    if (dx * dx + dz * dz > kFloorFarDistSq) continue;
+                    StreetLampInstance& lamp = streetLamps_[i];
+                    if (lamp.isGone) continue;
+
+                    // ボスが接近・通過した街灯を弾き飛ばす
+                    if (canBossBlowLamps && !lamp.isBlown) {
+                        float bdx = lamp.position.x - bossNowPos.x;
+                        float bdz = lamp.position.z - bossNowPos.z;
+                        float bd2 = bdx * bdx + bdz * bdz;
+                        if (bd2 <= kLampBlowRadiusSq) {
+                            lamp.isBlown = true;
+                            float len = std::sqrt(bd2);
+                            float dirX = (len > 0.01f) ? (bdx / len) : ((lampDist01(randomEngine_) > 0.5f) ? 1.0f : -1.0f);
+                            float dirZ = (len > 0.01f) ? (bdz / len) : 0.0f;
+                            float outSpd = 38.0f + lampDist01(randomEngine_) * 26.0f;
+                            lamp.velocity = {
+                                dirX * outSpd + (lampDist01(randomEngine_) - 0.5f) * 12.0f,
+                                24.0f + lampDist01(randomEngine_) * 18.0f,
+                                dirZ * outSpd + (lampDist01(randomEngine_) - 0.5f) * 12.0f
+                            };
+                            lamp.angVel = {
+                                (lampDist01(randomEngine_) - 0.5f) * 9.0f,
+                                (lampDist01(randomEngine_) - 0.5f) * 6.0f,
+                                (lampDist01(randomEngine_) - 0.5f) * 9.0f
+                            };
+                            if (particleManager_) {
+                                particleManager_->EmitCustomSparks(
+                                    { lamp.position.x, lamp.position.y + 8.0f, lamp.position.z },
+                                    65.0f, 8, { 1.0f, 0.8f, 0.3f }, 1.8f
+                                );
+                            }
+                        }
+                    }
+
+                    // 吹き飛び中の街灯の物理更新
+                    if (lamp.isBlown) {
+                        lamp.velocity.y -= 45.0f * kLampDt;
+                        lamp.position.x += lamp.velocity.x * kLampDt;
+                        lamp.position.y += lamp.velocity.y * kLampDt;
+                        lamp.position.z += lamp.velocity.z * kLampDt;
+
+                        lamp.rotation.x += lamp.angVel.x * kLampDt;
+                        lamp.rotation.y += lamp.angVel.y * kLampDt;
+                        lamp.rotation.z += lamp.angVel.z * kLampDt;
+
+                        if (lamp.position.y < kFloorY - 40.0f) {
+                            lamp.isGone = true;
+                            continue;
+                        }
+                    }
+
+                    float dx = lamp.position.x - camX;
+                    float dz = lamp.position.z - camZ;
+                    if (!lamp.isBlown && (dx * dx + dz * dz > kFloorFarDistSq)) continue;
                     if (streetLampTransformData_[i]) {
-                        Matrix4x4 world = Multiply(lampScale, MakeTranslateMatrix(streetLamps_[i].position));
+                        Matrix4x4 rotMat = Multiply(
+                            Multiply(MakeRotateXMatrix(lamp.rotation.x), MakeRotateYMatrix(lamp.rotation.y)),
+                            MakeRotateZMatrix(lamp.rotation.z)
+                        );
+                        Matrix4x4 world = Multiply(Multiply(lampScale, rotMat), MakeTranslateMatrix(lamp.position));
                         streetLampTransformData_[i]->World = world;
                         streetLampTransformData_[i]->WVP = Multiply(world, viewProjectionMatrix);
                     }
@@ -6539,6 +6659,17 @@ void GamePlayScene::Draw() {
 
     // --- 3Dオブジェクト（戦闘機/デバッグカメラモード共通）の描画 ---
     if (sceneMode_ == SceneMode::kFighter || sceneMode_ == SceneMode::kCamera) {
+        // ── 夜空・雲背景の描画 (最背面・深度テストなし、クリア画面と共通シェーダー) ──
+        if (graphicsPipeline_ && graphicsPipeline_->GetNightSkyPipelineState() && graphicsPipeline_->GetNightSkyRootSignature()) {
+            commandList->SetPipelineState(graphicsPipeline_->GetNightSkyPipelineState());
+            commandList->SetGraphicsRootSignature(graphicsPipeline_->GetNightSkyRootSignature());
+            commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            if (nightSkyResource_) {
+                commandList->SetGraphicsRootConstantBufferView(0, nightSkyResource_->GetGPUVirtualAddress());
+            }
+            commandList->DrawInstanced(3, 1, 0, 0);
+        }
+
         ID3D12DescriptorHeap* modelHeaps[] = { TextureManager::GetInstance()->GetSrvHeap() };
         commandList->SetDescriptorHeaps(1, modelHeaps);
         if (graphicsPipeline_ && graphicsPipeline_->GetObject3dPipelineState() && graphicsPipeline_->GetObject3dRootSignature()) {
@@ -6645,21 +6776,7 @@ void GamePlayScene::Draw() {
                 terrainModel_->DrawModel(commandList, TextureManager::GetInstance()->GetSrvHandleGPU("human/white.png"), TextureManager::GetInstance()->GetSrvHandleGPU("test.dds"));
             }
 
-            // 天球(SkyDome)描画 ── 専用パイプライン（Zバッファ書き込みなし・常に最遠面・ぼかしサンプラー）で描画
-            if (skydomeModel_ && skydomeTransformRes_ && graphicsPipeline_ && graphicsPipeline_->GetSkydomePipelineState() && !isIntroMapPhase) {
-                // 天球専用パイプラインとルートシグネチャに切り替える
-                commandList->SetPipelineState(graphicsPipeline_->GetSkydomePipelineState());
-                commandList->SetGraphicsRootSignature(graphicsPipeline_->GetSkydomeRootSignature());
-                if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
-                if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
-                commandList->SetGraphicsRootConstantBufferView(1, skydomeTransformRes_->GetGPUVirtualAddress());
-                int index = std::clamp(skyboxType_, 0, static_cast<int>(kNumSkyboxTextures) - 1);
-                std::string skyTex = kSkyboxTextures[index];
-                skydomeModel_->DrawModel(commandList, TextureManager::GetInstance()->GetSrvHandleGPU(skyTex), TextureManager::GetInstance()->GetSrvHandleGPU("test.dds"));
-                // 天球描画後に Object3d パイプラインに戻す
-                commandList->SetPipelineState(graphicsPipeline_->GetObject3dPipelineState());
-                commandList->SetGraphicsRootSignature(graphicsPipeline_->GetObject3dRootSignature());
-            }
+            // （天球(SkyDome)はクリア画面と共通の NightSky シェーダー背景に置き換え済み）
 
             // ビル(Building)描画（距離カリング & 1棟1ドローコール統合により超軽量化）
             if (buildingModel_ && !isIntroMapPhase) {
@@ -6720,6 +6837,7 @@ void GamePlayScene::Draw() {
                 // 1. 近距離（240m以内）の高精細街灯モデル
                 streetLampModel_->PrepareDraw(commandList, lampSrv, envSrv);
                 for (int i = 0; i < static_cast<int>(streetLamps_.size()) && i < kMaxStreetLamps; ++i) {
+                    if (streetLamps_[i].isGone) continue;
                     float dx = streetLamps_[i].position.x - camPosForLamp.x;
                     float dz = streetLamps_[i].position.z - camPosForLamp.z;
                     float d2 = dx * dx + dz * dz;
@@ -6739,6 +6857,7 @@ void GamePlayScene::Draw() {
                 if (streetLampLodModel_) {
                     streetLampLodModel_->PrepareDraw(commandList, lampSrv, envSrv);
                     for (int i = 0; i < static_cast<int>(streetLamps_.size()) && i < kMaxStreetLamps; ++i) {
+                        if (streetLamps_[i].isGone) continue;
                         float dx = streetLamps_[i].position.x - camPosForLamp.x;
                         float dz = streetLamps_[i].position.z - camPosForLamp.z;
                         float d2 = dx * dx + dz * dz;

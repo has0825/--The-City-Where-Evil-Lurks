@@ -83,7 +83,8 @@ private:
     struct NightSkyCB {
         float time;
         float aspectRatio;
-        float padding[2];
+        float camYaw;
+        float camPitch;
     };
     Microsoft::WRL::ComPtr<ID3D12Resource> nightSkyResource_;
     NightSkyCB* nightSkyData_ = nullptr;
