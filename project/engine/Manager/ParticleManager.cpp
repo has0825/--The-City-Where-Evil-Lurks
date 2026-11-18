@@ -114,6 +114,31 @@ void ParticleManager::Initialize(ID3D12Device* device) {
         cylinderParticles_[i].currentTime = 9999.0f;
         cylinderParticles_[i].lifeTime = 1.0f;
     }
+
+    // ---------------------------------------------------------
+    // 4. 火事煙パーティクル用 (通常アルファブレンド・最大256インスタンス)
+    // ---------------------------------------------------------
+    smokeInstancingResource_ = CreateBufferResource(device_, sizeof(ParticleForGPU) * kSmokeInstanceCount);
+    if (smokeInstancingResource_) {
+        smokeInstancingResource_->Map(0, nullptr, reinterpret_cast<void**>(&smokeInstancingData_));
+    }
+
+    uint32_t smokeSrvIndex = SrvManager::GetInstance()->Allocate();
+    smokeInstancingSrvHandleGPU_ = SrvManager::GetInstance()->GetGPUDescriptorHandle(smokeSrvIndex);
+    if (smokeInstancingResource_) {
+        SrvManager::GetInstance()->CreateSRVforStructuredBuffer(
+            smokeSrvIndex,
+            smokeInstancingResource_.Get(),
+            kSmokeInstanceCount,
+            sizeof(ParticleForGPU)
+        );
+    }
+
+    smokeParticles_.resize(kSmokeInstanceCount);
+    for (uint32_t i = 0; i < kSmokeInstanceCount; ++i) {
+        smokeParticles_[i].currentTime = 9999.0f;
+        smokeParticles_[i].lifeTime = 1.0f;
+    }
 }
 
 void ParticleManager::Update(
@@ -375,6 +400,56 @@ void ParticleManager::Update(
             cylinderInstancingData_[i].color.w = 0.0f;
         }
     }
+
+    // ── 4. 火事煙パーティクルの更新 ──
+    for (uint32_t i = 0; i < kSmokeInstanceCount; ++i) {
+        if (smokeParticles_[i].currentTime >= smokeParticles_[i].lifeTime) {
+            if (smokeInstancingData_) {
+                smokeInstancingData_[i].World = MakeIdentity4x4();
+                smokeInstancingData_[i].WVP = MakeIdentity4x4();
+                smokeInstancingData_[i].color = { 0.0f, 0.0f, 0.0f, 0.0f };
+                smokeInstancingData_[i].uvTransform = MakeIdentity4x4();
+            }
+            continue;
+        }
+
+        smokeParticles_[i].currentTime += deltaTime;
+        float tNorm = std::clamp(smokeParticles_[i].currentTime / smokeParticles_[i].lifeTime, 0.0f, 1.0f);
+
+        float damp = std::exp(-smokeParticles_[i].drag * deltaTime);
+        smokeParticles_[i].velocity.x *= damp;
+        smokeParticles_[i].velocity.y *= damp;
+        smokeParticles_[i].velocity.z *= damp;
+
+        smokeParticles_[i].position.x += smokeParticles_[i].velocity.x * deltaTime;
+        smokeParticles_[i].position.y += smokeParticles_[i].velocity.y * deltaTime;
+        smokeParticles_[i].position.z += smokeParticles_[i].velocity.z * deltaTime;
+
+        float easeScale = 1.0f - std::pow(1.0f - tNorm, 2.0f);
+        float sc = std::lerp(smokeParticles_[i].startScale, smokeParticles_[i].endScale, easeScale);
+        Vector3 finalScale = { sc, sc, sc };
+
+        smokeParticles_[i].color.x = std::lerp(smokeParticles_[i].startColor.x, smokeParticles_[i].endColor.x, tNorm);
+        smokeParticles_[i].color.y = std::lerp(smokeParticles_[i].startColor.y, smokeParticles_[i].endColor.y, tNorm);
+        smokeParticles_[i].color.z = std::lerp(smokeParticles_[i].startColor.z, smokeParticles_[i].endColor.z, tNorm);
+
+        float fadeIn = std::clamp(tNorm / 0.12f, 0.0f, 1.0f);
+        float fadeOut = std::pow(1.0f - tNorm, 1.25f);
+        smokeParticles_[i].color.w = 0.68f * fadeIn * fadeOut;
+
+        Matrix4x4 scaleMat = Matrix4x4MakeScaleMatrix(finalScale);
+        Matrix4x4 worldMatrix = Multiply(scaleMat, billboardMatrix);
+        worldMatrix.m[3][0] = smokeParticles_[i].position.x;
+        worldMatrix.m[3][1] = smokeParticles_[i].position.y;
+        worldMatrix.m[3][2] = smokeParticles_[i].position.z;
+
+        if (smokeInstancingData_) {
+            smokeInstancingData_[i].World = worldMatrix;
+            smokeInstancingData_[i].WVP = Multiply(worldMatrix, viewProjectionMatrix);
+            smokeInstancingData_[i].color = smokeParticles_[i].color;
+            smokeInstancingData_[i].uvTransform = smokeParticles_[i].uvTransform;
+        }
+    }
 }
 
 void ParticleManager::Draw(
@@ -404,6 +479,16 @@ void ParticleManager::Draw(
     if (cylinderModel) {
         cylinderModel->Draw(commandList, kCylinderInstanceCount, gradationSrvHandle, cylinderInstancingSrvHandleGPU_);
     }
+}
+
+void ParticleManager::DrawSmoke(
+    ID3D12GraphicsCommandList* commandList,
+    Model* particleModel,
+    D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandle) {
+    if (!particleModel) return;
+    ID3D12DescriptorHeap* descriptorHeaps[] = { SrvManager::GetInstance()->GetDescriptorHeap() };
+    commandList->SetDescriptorHeaps(1, descriptorHeaps);
+    particleModel->Draw(commandList, kSmokeInstanceCount, textureSrvHandle, smokeInstancingSrvHandleGPU_);
 }
 
 void ParticleManager::EmitHit(const Vector3& emitterPos) {
@@ -1572,6 +1657,10 @@ void ParticleManager::Clear() {
         particles_[i].currentTime = particles_[i].lifeTime;
         particles_[i].color.w = 0.0f;
     }
+    for (uint32_t i = 0; i < kSmokeInstanceCount; ++i) {
+        smokeParticles_[i].currentTime = smokeParticles_[i].lifeTime;
+        smokeParticles_[i].color.w = 0.0f;
+    }
 }
 
 void ParticleManager::EmitMegaRing(const Vector3& emitterPos, const Vector3& color) {
@@ -1978,6 +2067,48 @@ void ParticleManager::EmitSkywritingCloud(const Vector3& emitterPos) {
             particles_[p].useFireworkCurve = true;
             particles_[p].emitSubTrail = false;
             particles_[p].isCloudSmoke = true;
+            emitCount--;
+        }
+    }
+}
+
+void ParticleManager::EmitBossSmoke(const Vector3& emitterPos, int count) {
+    int emitCount = count;
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    std::uniform_real_distribution<float> distJitter(-4.0f, 4.0f);
+
+    for (uint32_t p = 0; p < kSmokeInstanceCount && emitCount > 0; ++p) {
+        if (smokeParticles_[p].currentTime >= smokeParticles_[p].lifeTime) {
+            smokeParticles_[p] = {};
+            smokeParticles_[p].effectType = 63;
+            smokeParticles_[p].type = Particle::Type::kBillboard;
+            smokeParticles_[p].position = {
+                emitterPos.x + distJitter(randomEngine_),
+                emitterPos.y + dist01(randomEngine_) * 3.0f,
+                emitterPos.z + distJitter(randomEngine_)
+            };
+            // 上方向へもくもく立ち昇る煙速度
+            smokeParticles_[p].velocity = {
+                (dist01(randomEngine_) - 0.5f) * 14.0f,
+                22.0f + dist01(randomEngine_) * 16.0f,
+                (dist01(randomEngine_) - 0.5f) * 14.0f
+            };
+
+            float startSc = 8.0f + dist01(randomEngine_) * 4.0f;
+            float endSc   = 24.0f + dist01(randomEngine_) * 10.0f;
+            smokeParticles_[p].startScale = startSc;
+            smokeParticles_[p].endScale = endSc;
+            smokeParticles_[p].scale = { startSc, startSc, startSc };
+
+            // 火事の煙のような濃い灰色〜黒灰色（通常アルファブレンドで描画）
+            smokeParticles_[p].startColor = { 0.30f, 0.29f, 0.28f };
+            smokeParticles_[p].endColor   = { 0.14f, 0.15f, 0.17f };
+            smokeParticles_[p].color = { 0.30f, 0.29f, 0.28f, 0.0f };
+            smokeParticles_[p].gravity = 0.0f;
+            smokeParticles_[p].drag = 0.75f;
+            smokeParticles_[p].lifeTime = 2.0f + dist01(randomEngine_) * 1.0f;
+            smokeParticles_[p].currentTime = 0.0f;
+            smokeParticles_[p].uvTransform = MakeIdentity4x4();
             emitCount--;
         }
     }

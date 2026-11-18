@@ -1,6 +1,7 @@
 ﻿#include "GamePlayScene.h"
 #include "WinApp.h"
 #include "SceneManager.h"
+#include "ClearScene.h"
 #include "LoadingScreen.h"
 #include "D3D12Util.h"
 #include "MathUtil.h"
@@ -658,6 +659,10 @@ void GamePlayScene::Initialize() {
     nightSkyData_->aspectRatio = static_cast<float>(WinApp::kClientWidth) / static_cast<float>(WinApp::kClientHeight);
     nightSkyData_->camYaw = 0.0f;
     nightSkyData_->camPitch = 0.0f;
+    nightSkyData_->clearSkyBlend = 0.0f;
+    nightSkyData_->padding[0] = 0.0f;
+    nightSkyData_->padding[1] = 0.0f;
+    nightSkyData_->padding[2] = 0.0f;
 
     // レティクル(エイミング)用バッファ
     aimingInstancingResource_ = CreateBufferResource(device, sizeof(ParticleForGPU));
@@ -2098,8 +2103,13 @@ void GamePlayScene::Update() {
         Vector3 bossPos = GetBossPosition(bodyBounce);
 
         // ==========================================
-        // 【カメラワーク】さらに高い位置からの斜め上俯瞰アングルでボス全体を見下ろす
+        // 【カメラワーク】斜め上俯瞰で崩壊を見せた後、空へ上を向いてクリア画面の夜空と重ねる
         // ==========================================
+        float panT = (hasHitBoss_ && bossDefeatHitTimer_ >= 5.0f)
+            ? std::clamp((bossDefeatHitTimer_ - 5.0f) / 0.45f, 0.0f, 1.0f)
+            : 0.0f;
+        float easePan = panT * panT * (3.0f - 2.0f * panT);
+
         float bossProgress = fighterWorldZ_ + bossZOffset_;
         Vector3 bRailDir = GetRailDirection(bossProgress);
         Vector3 bRailRight = CalculateRailRight(bRailDir);
@@ -2107,17 +2117,19 @@ void GamePlayScene::Update() {
         Vector3 targetCamPos = Add(
             bossPos,
             Add(
-                Scale(bRailDir, -85.0f),
+                Scale(bRailDir, -75.0f),
                 Add(
-                    Scale(bRailRight, 65.0f + std::sin(bossDefeatTimer_ * 0.4f) * 8.0f),
-                    Scale(bRailUp, 270.0f)
+                    Scale(bRailRight, 10.0f + std::sin(bossDefeatTimer_ * 0.4f) * 3.0f),
+                    Scale(bRailUp, 165.0f)
                 )
             )
         );
 
-        // 開始フレームは即座に俯瞰位置へ配置し、以降は滑らかに追従
+        // 開始フレームは即座に俯瞰位置へ配置し、パンアップ開始(3.8s以降)はカメラ位置をその場に固定する
         bool isStartFrame = (bossDefeatTimer_ <= kDeltaTime * 1.5f);
-        camTrans.translate = isStartFrame ? targetCamPos : Lerp(camTrans.translate, targetCamPos, 0.08f);
+        if (panT <= 0.0f) {
+            camTrans.translate = isStartFrame ? targetCamPos : Lerp(camTrans.translate, targetCamPos, 0.08f);
+        }
 
         // ボスが少し地面側へ沈むため、やや下寄りを注視する
         Vector3 lookTarget = Add(bossPos, { 0.0f, -6.0f, 0.0f });
@@ -2129,10 +2141,14 @@ void GamePlayScene::Update() {
             lookDir = bRailDir;
         }
 
-        float targetRotY = -std::atan2(lookDir.x, lookDir.z);
-        float targetRotX = std::atan2(-lookDir.y, std::sqrt(lookDir.x * lookDir.x + lookDir.z * lookDir.z));
+        float bossLookRotY = -std::atan2(lookDir.x, lookDir.z);
+        float bossLookRotX = std::atan2(-lookDir.y, std::sqrt(lookDir.x * lookDir.x + lookDir.z * lookDir.z));
 
-        float rotLerpFactor = isStartFrame ? 1.0f : 0.08f;
+        // 3.8s以降はカメラ位置も横向き(Yaw)も変えず、その場から素早く真上方向(-0.85f)へピッチだけを上げる
+        float targetRotY = bossLookRotY;
+        float targetRotX = std::lerp(bossLookRotX, -0.85f, easePan);
+
+        float rotLerpFactor = (isStartFrame || panT > 0.0f) ? 1.0f : 0.08f;
 
         float diffY = targetRotY - camTrans.rotate.y;
         while (diffY < -static_cast<float>(M_PI)) diffY += 2.0f * static_cast<float>(M_PI);
@@ -2165,6 +2181,7 @@ void GamePlayScene::Update() {
                 if (particleManager_) {
                     particleManager_->EmitFlame(expPos, 10.0f, 14, { 1.0f, 0.55f, 0.15f });
                     particleManager_->EmitCustomSparks(expPos, 95.0f, 16, { 1.0f, 0.75f, 0.25f }, 1.8f);
+                    particleManager_->EmitBossSmoke(expPos, 6);
                 }
                 cameraShakeTimer_ = 0.18f;
                 cameraShakeIntensity_ = shakePower;
@@ -2290,21 +2307,28 @@ void GamePlayScene::Update() {
                 updatePartPhysics(bossLegDebris_[li], bossLegTransformData_[li], kFloorY + 12.5f, 0.28f, 42.0f, false);
             }
 
-            // 機能停止後の余韻：壊れた胴体や脚から最後の微かなショート火花
-            if (bossDebrisSparkTimer_ >= 0.35f && bossDefeatHitTimer_ < 3.6f) {
+            // 機能停止後の余韻：壊れた胴体や脚からショート火花と立ち昇る煙が出る
+            if (bossDebrisSparkTimer_ >= 0.28f && bossDefeatHitTimer_ < 5.1f) {
                 bossDebrisSparkTimer_ = 0.0f;
                 if (particleManager_) {
                     Vector3 bodyNow = Add(bossBodyDebris_.initialPos, bossBodyDebris_.offset);
                     particleManager_->EmitCustomSparks(bodyNow, 50.0f, 6, { 0.45f, 0.85f, 1.0f }, 1.6f);
+                    if (bossDefeatHitTimer_ >= 0.65f) {
+                        particleManager_->EmitBossSmoke(bodyNow, 2);
+                    }
                     int rLeg = rand() % 8;
                     Vector3 legNow = Add(bossLegDebris_[rLeg].initialPos, bossLegDebris_[rLeg].offset);
                     particleManager_->EmitCustomSparks(legNow, 45.0f, 5, { 1.0f, 0.7f, 0.2f }, 1.8f);
+                    if (bossDefeatHitTimer_ >= 0.65f) {
+                        particleManager_->EmitBossSmoke(legNow, 1);
+                    }
                 }
             }
         }
 
-        // クリアシーンへの遷移判定 (膝崩れ落ち＋連続小爆発でのバラバラ崩壊後、4.2秒でCLEARへ)
-        if (hasHitBoss_ && bossDefeatHitTimer_ >= 4.2f) {
+        // クリアシーンへの遷移判定 (崩壊後、空へ上を向いてクリア画面の背景と重ねてから遷移)
+        if (hasHitBoss_ && bossDefeatHitTimer_ >= 5.80f) {
+            ClearScene::SetInitialNightSkyTime(nightSkyTime_);
             SceneManager::GetInstance()->ChangeScene("CLEAR");
             return;
         }
@@ -5652,8 +5676,22 @@ void GamePlayScene::Update() {
         if (nightSkyData_) {
             nightSkyData_->time = nightSkyTime_;
             nightSkyData_->aspectRatio = static_cast<float>(WinApp::kClientWidth) / static_cast<float>(WinApp::kClientHeight);
-            nightSkyData_->camYaw = camTrans.rotate.y;
-            nightSkyData_->camPitch = camTrans.rotate.x;
+            float clearSkyBlend = 0.0f;
+            float skyYaw = camTrans.rotate.y;
+            float skyPitch = camTrans.rotate.x;
+            if (isBossDefeatedSequence_ && hasHitBoss_ && bossDefeatHitTimer_ >= 5.0f) {
+                float panT = std::clamp((bossDefeatHitTimer_ - 5.0f) / 0.45f, 0.0f, 1.0f);
+                clearSkyBlend = panT * panT * (3.0f - 2.0f * panT);
+                // 3Dカメラはその場で上を向くだけにしつつ、夜空の背景はクリア画面正面(0.0f, 0.0f)と一致させる
+                float diffY = 0.0f - camTrans.rotate.y;
+                while (diffY < -static_cast<float>(M_PI)) diffY += 2.0f * static_cast<float>(M_PI);
+                while (diffY > static_cast<float>(M_PI)) diffY -= 2.0f * static_cast<float>(M_PI);
+                skyYaw = camTrans.rotate.y + diffY * clearSkyBlend;
+                skyPitch = std::lerp(camTrans.rotate.x, 0.0f, clearSkyBlend);
+            }
+            nightSkyData_->camYaw = skyYaw;
+            nightSkyData_->camPitch = skyPitch;
+            nightSkyData_->clearSkyBlend = clearSkyBlend;
         }
 
         // 夜ステージ用：自機前方（カメラ基準の前方斜め下）を照らすヘッドライトを更新
@@ -7134,6 +7172,12 @@ void GamePlayScene::Draw() {
                     gradationSrvHandleGPU_,
                     textSrvHandleGPU_
                 );
+            }
+
+            // 火事煙パーティクルの描画（通常アルファブレンド＋SmokeParticleシェーダー）
+            if (graphicsPipeline_->GetSmokeParticlePipelineState()) {
+                commandList->SetPipelineState(graphicsPipeline_->GetSmokeParticlePipelineState());
+                particleManager_->DrawSmoke(commandList, particleModel_.get(), textureSrvHandleGPU_);
             }
 
             // スプライト（テキスト）の描画

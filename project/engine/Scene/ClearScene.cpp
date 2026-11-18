@@ -111,12 +111,17 @@ void ClearScene::Initialize() {
     // 夜空背景用定数バッファの作成
     nightSkyResource_ = CreateBufferResource(device, sizeof(NightSkyCB));
     nightSkyResource_->Map(0, nullptr, reinterpret_cast<void**>(&nightSkyData_));
-    nightSkyData_->time = 0.0f;
+    time_ = s_initialNightSkyTime_;
+    s_initialNightSkyTime_ = 0.0f;
+    nightSkyData_->time = time_;
     nightSkyData_->aspectRatio = static_cast<float>(WinApp::kClientWidth) / static_cast<float>(WinApp::kClientHeight);
     nightSkyData_->camYaw = 0.0f;
     nightSkyData_->camPitch = 0.0f;
+    nightSkyData_->clearSkyBlend = 1.0f;
+    nightSkyData_->padding[0] = 0.0f;
+    nightSkyData_->padding[1] = 0.0f;
+    nightSkyData_->padding[2] = 0.0f;
 
-    time_ = 0.0f;
     isReturningToTitle_ = false;
     hasTriggeredStarFlash_ = false;
     returnTimer_ = 0.0f;

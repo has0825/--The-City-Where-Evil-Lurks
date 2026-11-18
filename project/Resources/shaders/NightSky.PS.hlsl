@@ -8,6 +8,8 @@ struct NightSkyParams {
     float aspectRatio;
     float camYaw;
     float camPitch;
+    float clearSkyBlend; // 0.0: ステージ用(雲多め), 1.0: クリア用(雲控えめ・星キラキラ)
+    float3 padding;
 };
 
 ConstantBuffer<NightSkyParams> gParams : register(b0);
@@ -204,8 +206,10 @@ PixelShaderOutput main(VertexShaderOutput input) {
     float mwIntensity = mwBand * smoothstep(0.28, 0.85, mwNoise) * (1.0 - smoothstep(0.45, 0.85, mwDust) * 0.58);
     mwIntensity *= smoothstep(0.05, 0.35, heightFactor);
 
+    float clearBlend = saturate(gParams.clearSkyBlend);
+
     float3 milkyWayColor = lerp(float3(0.005, 0.010, 0.036), float3(0.016, 0.024, 0.068), mwNoise);
-    skyColor += milkyWayColor * mwIntensity * 0.85;
+    skyColor += milkyWayColor * mwIntensity * lerp(0.85, 1.40, clearBlend);
 
     // 3. 星空 (複数レイヤー + ゆっくりした日周運動 + 瞬き)
     float starVisibility = smoothstep(0.02, 0.25, heightFactor);
@@ -215,6 +219,10 @@ PixelShaderOutput main(VertexShaderOutput input) {
     stars += StarLayer(starCoord, 44.0, gParams.time, 0.72, 0.0) * (0.28 + mwIntensity * 0.65);
     stars += StarLayer(starCoord + float2(5.2, 3.1), 22.0, gParams.time, 0.80, 0.0) * 0.62;
     stars += StarLayer(starCoord + float2(11.4, 7.8), 9.5, gParams.time, 0.86, 0.35) * 1.15;
+    // クリア空・パンアップ時はさらにたくさんのキラキラ輝く星々を追加
+    stars += StarLayer(starCoord + float2(3.7, 9.1), 32.0, gParams.time, 0.62, 0.28) * 1.05 * clearBlend;
+    stars += StarLayer(starCoord + float2(17.1, 4.3), 14.0, gParams.time, 0.74, 0.55) * 1.15 * clearBlend;
+    stars *= lerp(1.0, 1.45, clearBlend);
 
     skyColor += stars * starVisibility;
 
@@ -225,27 +233,31 @@ PixelShaderOutput main(VertexShaderOutput input) {
     float3 moonDir = normalize(float3(0.58, 0.42, 1.05));
     float moonAngleDist = acos(clamp(dot(rayDir, moonDir), -1.0, 1.0));
 
-    // 6. 透視投影によるリアルな夜の雲 (2レイヤー・パララックス移動・月光ライティング)
+    // 6. 透視投影によるリアルな夜の雲 (ステージ時は雲多め、クリア時は雲控えめで星を引き立てる)
     // 空の上向き成分が正の領域で、雲平面への射影座標を求める
     float projY = max(rayDir.y + 0.06, 0.08);
     float distanceFade = smoothstep(0.01, 0.16, rayDir.y + 0.06); // 地平線ギリギリは霞に溶ける
 
-    // --- 奥の高層薄雲 (空全体に大きく広がる薄雲) ---
+    // --- 奥の高層薄雲 ---
     float2 highCloudUV = rayDir.xz / (projY * 1.25) * 1.75;
     highCloudUV += float2(gParams.time * 0.012, gParams.time * 0.004);
     float highDensity = CloudDensity(highCloudUV + float2(12.3, 4.1), gParams.time * 0.5);
-    float highAlpha = smoothstep(0.20, 0.56, highDensity) * 0.68 * distanceFade;
+    float highMin = lerp(0.20, 0.52, clearBlend);
+    float highMax = lerp(0.56, 0.82, clearBlend);
+    float highAlpha = smoothstep(highMin, highMax, highDensity) * lerp(0.68, 0.30, clearBlend) * distanceFade;
 
     float moonScatter = exp(-moonAngleDist * 3.2);
     float3 highCloudCol = lerp(float3(0.012, 0.022, 0.052), float3(0.095, 0.135, 0.24), moonScatter);
     skyColor = lerp(skyColor, highCloudCol, highAlpha);
 
-    // --- 手前の低層立体雲 (空を覆う豊かな立体雲) ---
+    // --- 手前の低層立体雲 ---
     float2 lowCloudUV = rayDir.xz / projY * 1.45;
     lowCloudUV += float2(-gParams.time * 0.024, gParams.time * 0.006); // 少しずつ動いて見える速度
 
     float lowRaw = CloudDensity(lowCloudUV, gParams.time);
-    float lowAlpha = smoothstep(0.22, 0.52, lowRaw) * 0.94 * distanceFade;
+    float lowMin = lerp(0.22, 0.50, clearBlend);
+    float lowMax = lerp(0.52, 0.78, clearBlend);
+    float lowAlpha = smoothstep(lowMin, lowMax, lowRaw) * lerp(0.94, 0.52, clearBlend) * distanceFade;
 
     if (lowAlpha > 0.001) {
         // 月の方向へ少しオフセットして雲の厚みの差(光の透過・輪郭の輝き)を計算
@@ -256,7 +268,8 @@ PixelShaderOutput main(VertexShaderOutput input) {
         // 光の当たり具合: 手前が薄く、月側に向かって開けているほど明るい
         float lightDiff = saturate((lowRaw - shadowRaw) * 3.8 + 0.48);
         // 雲の薄い縁が月光で銀色に光る (シルバーライニング)
-        float edgeGlow = smoothstep(0.22, 0.35, lowRaw) * (1.0 - smoothstep(0.35, 0.54, lowRaw));
+        float edgeMid = (lowMin + lowMax) * 0.45;
+        float edgeGlow = smoothstep(lowMin, edgeMid, lowRaw) * (1.0 - smoothstep(edgeMid, lowMax, lowRaw));
         float silverLining = edgeGlow * exp(-moonAngleDist * 2.2) * 1.65;
 
         // 雲の暗い底色 〜 月光に照らされた表層色

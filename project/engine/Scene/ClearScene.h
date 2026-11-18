@@ -19,6 +19,9 @@ public:
     void Update() override;
     void Draw() override;
 
+    // 撃破演出の空パンアップから背景の夜空・雲時間をシームレスに引き継ぐ
+    static void SetInitialNightSkyTime(float t) { s_initialNightSkyTime_ = t; }
+
 private:
     Input* input_ = nullptr;
     GraphicsPipeline* graphicsPipeline_ = nullptr;
@@ -85,7 +88,10 @@ private:
         float aspectRatio;
         float camYaw;
         float camPitch;
+        float clearSkyBlend;
+        float padding[3];
     };
     Microsoft::WRL::ComPtr<ID3D12Resource> nightSkyResource_;
     NightSkyCB* nightSkyData_ = nullptr;
+    static inline float s_initialNightSkyTime_ = 0.0f;
 };

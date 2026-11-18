@@ -487,6 +487,8 @@ private:
         float aspectRatio;
         float camYaw;
         float camPitch;
+        float clearSkyBlend;
+        float padding[3];
     };
     Microsoft::WRL::ComPtr<ID3D12Resource> nightSkyResource_;
     NightSkyCB* nightSkyData_ = nullptr;

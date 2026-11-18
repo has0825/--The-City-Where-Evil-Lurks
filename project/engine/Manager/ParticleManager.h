@@ -75,6 +75,12 @@ public:
         D3D12_GPU_DESCRIPTOR_HANDLE gradationSrvHandle,
         D3D12_GPU_DESCRIPTOR_HANDLE textSrvHandle);
 
+    // 火事煙専用描画（通常アルファブレンド用）
+    void DrawSmoke(
+        ID3D12GraphicsCommandList* commandList,
+        Model* particleModel,
+        D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandle);
+
     // エフェクト発生用API
     void EmitHit(const Vector3& emitterPos);
     void EmitRing(const Vector3& emitterPos, const Vector3& color = { 1.0f, 0.5f, 0.1f });
@@ -102,6 +108,7 @@ public:
     void EmitJetAfterburner(const Vector3& emitterPos, const Vector3& backDir);
     void EmitSkywritingFirework(const Vector3& emitterPos, const Vector3& color);
     void EmitSkywritingCloud(const Vector3& emitterPos);
+    void EmitBossSmoke(const Vector3& emitterPos, int count = 4);
     void EmitLSystemLightning(const Vector3& startPos, const Vector3& endPos, int depth, float scale, const Vector3& color);
 
 private:
@@ -139,4 +146,11 @@ private:
     ParticleForGPU* cylinderInstancingData_ = nullptr;
     D3D12_GPU_DESCRIPTOR_HANDLE cylinderInstancingSrvHandleGPU_ = {};
     std::vector<Particle> cylinderParticles_;
+
+    // --- 火事煙パーティクル (通常アルファブレンド・最大256インスタンス) ---
+    const uint32_t kSmokeInstanceCount = 256;
+    Microsoft::WRL::ComPtr<ID3D12Resource> smokeInstancingResource_;
+    ParticleForGPU* smokeInstancingData_ = nullptr;
+    D3D12_GPU_DESCRIPTOR_HANDLE smokeInstancingSrvHandleGPU_ = {};
+    std::vector<Particle> smokeParticles_;
 };
