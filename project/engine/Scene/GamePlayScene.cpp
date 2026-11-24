@@ -839,6 +839,20 @@ void GamePlayScene::Initialize() {
     bossLightData_->enableNightEmissive = 3;
     bossLightData_->emissiveIntensity = 1.0f;
 
+    // 地面専用ライト（街灯ライト＋ボス歩行時のひび割れ座標伝達用）
+    floorLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
+    floorLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&floorLightData_));
+    if (directionalLightData_) {
+        *floorLightData_ = *directionalLightData_;
+    } else {
+        *floorLightData_ = {};
+    }
+    floorLightData_->enableNightEmissive = 4;
+    for (int c = 0; c < 8; ++c) {
+        floorCracks_[c] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    }
+    floorCrackWriteIdx_ = 0;
+
     // 蜘蛛の巣テクスチャのロードとSRV取得
     TextureManager::GetInstance()->LoadTexture("spider web.png");
     spiderWebSrvHandleGPU_ = TextureManager::GetInstance()->GetSrvHandleGPU("spider web.png");
@@ -1830,23 +1844,125 @@ void GamePlayScene::Initialize() {
     tokyoTransformData_->World = MakeIdentity4x4();
     tokyoTransformData_->color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
-    // ── 通常プレイ開始時は最初からステージ遠方(S=1100m)にボスがいる状態でスタートし、
-    //    ロード画面明けは地球→日本→東京夜景を省いて、ボスの登場演出(t=6.4s〜)から直接開始する ──
+    // ── 通常プレイ / パーティクルコンテスト用スライドショー初期化 ──
     if (!isTitleMode_) {
-        currentPhase_ = GamePhase::kPhase1;
-        bossAppearanceTimer_ = kBossIntroTotalDuration - 6.4f; // 地球・日本・東京夜景をスキップし、ボスの登場演出のみを再生
-        hasStartedInitialPhase_ = false; // 冒頭演出終了後に「PHASE 1」を開始
-        phaseIntroTimer_ = -1.0f;
-        warningScrollOffset_ = 0.0f;
-        warningLastBeatIndex_ = -1;
-        bossZOffset_ = 1100.0f; // 最初ボスとプレイヤーはある程度離れた位置(1100m前方)に配置
-        bossTime_ = 0.0f;
-        isBossLanded_ = false;
-        isBossRoared_ = false;
-        hasEmittedJumpStart_ = false;
-        hasEmittedJumpEnd_ = false;
-        bossActionState_ = BossActionState::kIdle;
-        bossActionTimer_ = 0.0f;
+        if (s_slideshowMode_) {
+            // 曲がり角と重ならない最長直線区間の先頭に配置
+            if (!waypointDistances_.empty()) {
+                float totalDist = waypointDistances_.back();
+                float bestStartS = 0.0f;
+                float bestLength = -1.0f;
+                float prevEnd = 0.0f;
+                for (const auto& c : corners_) {
+                    float segLen = c.triggerS - prevEnd;
+                    if (segLen > bestLength) {
+                        bestLength = segLen;
+                        bestStartS = prevEnd;
+                    }
+                    prevEnd = c.cornerS + 120.0f;
+                }
+                if (totalDist > prevEnd) {
+                    float tailLen = totalDist - prevEnd - 250.0f;
+                    if (tailLen > bestLength) {
+                        bestLength = tailLen;
+                        bestStartS = prevEnd;
+                    }
+                }
+                fighterWorldZ_ = bestStartS;
+                for (auto& c : corners_) {
+                    if (c.cornerS < fighterWorldZ_ + 100.0f) {
+                        c.completed = true;
+                    }
+                }
+            }
+
+            slideshowTimer_ = 0.0f;
+            slideshowActionStage_ = 0;
+            autoLastHitTimer_ = 0.0f;
+            hasFiredAutoLastHit_ = false;
+            phaseIntroTimer_ = -1.0f;
+            warningScrollOffset_ = 0.0f;
+            warningLastBeatIndex_ = -1;
+            bossTime_ = 0.0f;
+            hasEmittedJumpStart_ = false;
+            hasEmittedJumpEnd_ = false;
+            bossActionState_ = BossActionState::kIdle;
+            bossActionTimer_ = 0.0f;
+
+            if (s_slideshowStep_ == 0) {
+                // Slide 0: ボス登場（着地衝撃波＆咆哮エフェクト）
+                currentPhase_ = GamePhase::kPhase1;
+                bossAppearanceTimer_ = kBossIntroTotalDuration - 7.0f;
+                hasStartedInitialPhase_ = false;
+                bossZOffset_ = 169.0f;
+                isBossLanded_ = false;
+                isBossRoared_ = false;
+                for (auto& enemy : enemies_) enemy.isAlive = false;
+            } else if (s_slideshowStep_ == 1) {
+                // Slide 1: 自機バレルロール風刃・斬撃＆敵撃破爆破
+                currentPhase_ = GamePhase::kPhase1;
+                bossAppearanceTimer_ = 0.0f;
+                hasStartedInitialPhase_ = true;
+                bossZOffset_ = 1100.0f;
+                isBossLanded_ = false;
+                isBossRoared_ = false;
+                enemyGroups_[0].centerRailProgress = fighterWorldZ_ + 145.0f;
+                enemyGroups_[0].centerX = 0.0f;
+                enemyGroups_[0].centerY = 0.0f;
+                for (size_t ei = 0; ei < enemies_.size(); ++ei) {
+                    if (ei < 3) {
+                        enemies_[ei].isAlive = true;
+                        enemies_[ei].hp = 10.0f;
+                        enemies_[ei].maxHP = 10.0f;
+                        enemies_[ei].groupIndex = 0;
+                        enemies_[ei].relativeZ = 145.0f + static_cast<float>(ei) * 18.0f;
+                        enemies_[ei].localOffset = { (static_cast<float>(ei) - 1.0f) * 10.0f, 0.0f, 0.0f };
+                    } else {
+                        enemies_[ei].isAlive = false;
+                    }
+                }
+            } else if (s_slideshowStep_ == 2) {
+                // Slide 2: ボスの禍々しい攻撃（落雷・糸レーザー・蜘蛛の巣弾）＆プレイヤー弾の着弾爆破
+                selectedEffectPreset_ = 0;
+                currentPhase_ = GamePhase::kBossFight;
+                bossAppearanceTimer_ = 0.0f;
+                hasStartedInitialPhase_ = true;
+                bossZOffset_ = 169.0f;
+                bossHP_ = 500.0f;
+                bossHPVisual_ = 500.0f;
+                isBossLanded_ = true;
+                isBossModelVisible_ = true;
+                isBossRoared_ = true;
+                for (auto& enemy : enemies_) enemy.isAlive = false;
+            } else {
+                // Slide 3: ボス撃破演出（爆発・煙・目の消灯・空パンアップ）
+                currentPhase_ = GamePhase::kBossFight;
+                bossAppearanceTimer_ = 0.0f;
+                hasStartedInitialPhase_ = true;
+                bossZOffset_ = 169.0f;
+                bossHP_ = 4.0f;
+                bossHPVisual_ = 4.0f;
+                isBossLanded_ = true;
+                isBossModelVisible_ = true;
+                isBossRoared_ = true;
+                for (auto& enemy : enemies_) enemy.isAlive = false;
+            }
+        } else {
+            currentPhase_ = GamePhase::kPhase1;
+            bossAppearanceTimer_ = kBossIntroTotalDuration - 6.4f;
+            hasStartedInitialPhase_ = false;
+            phaseIntroTimer_ = -1.0f;
+            warningScrollOffset_ = 0.0f;
+            warningLastBeatIndex_ = -1;
+            bossZOffset_ = 1100.0f;
+            bossTime_ = 0.0f;
+            isBossLanded_ = false;
+            isBossRoared_ = false;
+            hasEmittedJumpStart_ = false;
+            hasEmittedJumpEnd_ = false;
+            bossActionState_ = BossActionState::kIdle;
+            bossActionTimer_ = 0.0f;
+        }
     }
 }
 
@@ -2386,6 +2502,9 @@ void GamePlayScene::Update() {
 
         // クリアシーンへの遷移判定 (崩壊後、空へ上を向いてクリア画面の背景と重ねてから遷移)
         if (hasHitBoss_ && bossDefeatHitTimer_ >= 5.80f) {
+            if (s_slideshowMode_) {
+                s_slideshowStep_ = 4;
+            }
             ClearScene::SetInitialNightSkyTime(nightSkyTime_);
             SceneManager::GetInstance()->ChangeScene("CLEAR");
             return;
@@ -2565,11 +2684,12 @@ void GamePlayScene::Update() {
                 PlaySE(jumpSE_, false, 2.0f);
             }
             Vector3 landPos = GetBossPosition(0.0f);
-            for (int k = 0; k < 12; ++k) {
-                particleManager_->EmitHit(landPos);
+            landPos.y = kFloorY + 0.3f;
+            floorCracks_[floorCrackWriteIdx_] = { landPos.x, kFloorY, landPos.z, 24.0f };
+            floorCrackWriteIdx_ = (floorCrackWriteIdx_ + 1) % 8;
+            if (particleManager_) {
+                particleManager_->EmitBossSmoke(landPos, 8);
             }
-            particleManager_->EmitRing(landPos);
-            particleManager_->EmitCylinder(landPos);
         }
 
         if (t >= 7.8f && t < 9.8f && !isTitleMode_) {
@@ -2607,14 +2727,33 @@ void GamePlayScene::Update() {
                 PlaySE(jumpSE_, false, 3.0f); // 大音量の咆哮SE
             }
             
-            // ボス位置から赤い高威力エネルギー衝撃波群を大放出
+            // ボス全体（胴体＋各脚）を赤い煙で広く纏わせる
             Vector3 bossPos = GetBossPosition(0.0f);
-            particleManager_->EmitMegaRing(bossPos, {1.0f, 0.1f, 0.1f});
-            particleManager_->EmitMegaCylinder(bossPos, {1.0f, 0.1f, 0.1f});
-            particleManager_->EmitLightning(bossPos, 65.0f, 30, { 1.0f, 0.2f, 0.2f });
-            particleManager_->EmitGravityVortex(bossPos, 35.0f, 40, { 0.8f, 0.1f, 0.1f });
-            particleManager_->EmitChaosVoid(bossPos, 45.0f, 30, { 0.6f, 0.0f, 0.9f });
-            particleManager_->EmitCustomSparks(bossPos, 90.0f, 50, { 1.0f, 0.4f, 0.1f }, 1.5f);
+            float bossIntroProgress = fighterWorldZ_ + bossZOffset_;
+            Vector3 bossIntroDir = GetRailDirection(bossIntroProgress);
+            Vector3 bossIntroVel = Scale(bossIntroDir, boostForwardSpeed_ * 0.92f);
+            particleManager_->EmitColoredSmoke(
+                bossPos, 28,
+                { 0.92f, 0.14f, 0.08f }, { 0.28f, 0.04f, 0.05f },
+                5.0f, 1.25f, 3.0f, 0.75f, 38.0f, bossIntroVel
+            );
+            for (int li = 0; li < 8; ++li) {
+                if (bossLegTransformData_[li]) {
+                    const Matrix4x4& lw = bossLegTransformData_[li]->World;
+                    Vector3 lRoot = { lw.m[3][0], lw.m[3][1], lw.m[3][2] };
+                    Vector3 lDir = { lw.m[2][0], lw.m[2][1], lw.m[2][2] };
+                    float lLen = std::sqrt(lDir.x * lDir.x + lDir.y * lDir.y + lDir.z * lDir.z);
+                    if (lLen > 0.001f) {
+                        lDir = { lDir.x / lLen, lDir.y / lLen, lDir.z / lLen };
+                    }
+                    Vector3 lMid = Add(lRoot, Scale(lDir, bossLegScale_ * 0.30f));
+                    particleManager_->EmitColoredSmoke(
+                        lMid, 3,
+                        { 0.92f, 0.14f, 0.08f }, { 0.28f, 0.04f, 0.05f },
+                        4.0f, 1.15f, 3.0f, 0.70f, 10.0f, bossIntroVel
+                    );
+                }
+            }
 
             // 周囲のビルを衝撃波で吹き飛ばす
             Vector3 roarPos = GetBossPosition(0.0f, 0.0f, 0.0f);
@@ -2687,14 +2826,35 @@ void GamePlayScene::Update() {
 
             static int emitCounter = 0;
             emitCounter++;
-            if (emitCounter % 3 == 0) {
+            if (emitCounter % 2 == 0) {
                 Vector3 bossPos = GetBossPosition(0.0f);
                 float bossProgress = fighterWorldZ_ + bossZOffset_;
                 Vector3 bossRailDir = GetRailDirection(bossProgress);
-                Vector3 bossRailUp = Cross(bossRailDir, Normalize(Vector3{ -bossRailDir.z, 0.0f, bossRailDir.x }));
-                Vector3 mouthPos = Add(bossPos, Add(Scale(bossRailUp, 6.0f), Scale(bossRailDir, -22.0f)));
-                particleManager_->EmitFlame(mouthPos, 70.0f, 6, { 1.0f, 0.1f, 0.1f });
-                particleManager_->EmitCustomSparks(mouthPos, 80.0f, 10, { 1.0f, 0.5f, 0.1f }, 1.0f);
+                Vector3 bossVel = Scale(bossRailDir, boostForwardSpeed_ * 0.94f);
+                particleManager_->EmitColoredSmoke(
+                    bossPos, 6,
+                    { 0.90f, 0.16f, 0.08f }, { 0.28f, 0.04f, 0.05f },
+                    3.5f, 1.20f, 3.0f, 0.55f, 36.0f, bossVel
+                );
+                // 各脚にも交互に赤い煙を纏わせて全体を包む
+                int legOffset = (emitCounter / 2) % 2;
+                for (int li = legOffset; li < 8; li += 2) {
+                    if (bossLegTransformData_[li]) {
+                        const Matrix4x4& lw = bossLegTransformData_[li]->World;
+                        Vector3 lRoot = { lw.m[3][0], lw.m[3][1], lw.m[3][2] };
+                        Vector3 lDir = { lw.m[2][0], lw.m[2][1], lw.m[2][2] };
+                        float lLen = std::sqrt(lDir.x * lDir.x + lDir.y * lDir.y + lDir.z * lDir.z);
+                        if (lLen > 0.001f) {
+                            lDir = { lDir.x / lLen, lDir.y / lLen, lDir.z / lLen };
+                        }
+                        Vector3 lMid = Add(lRoot, Scale(lDir, bossLegScale_ * 0.30f));
+                        particleManager_->EmitColoredSmoke(
+                            lMid, 2,
+                            { 0.90f, 0.16f, 0.08f }, { 0.28f, 0.04f, 0.05f },
+                            3.0f, 1.05f, 2.5f, 0.50f, 9.0f, bossVel
+                        );
+                    }
+                }
             }
         } else if (t >= 11.2f) {
             camera_->SetFov(0.45f);
@@ -2725,19 +2885,39 @@ void GamePlayScene::Update() {
     if (!isTitleMode_ && !isBossDefeatedSequence_) {
         bossTime_ += kDeltaTime * bossLegSwingSpeed_;
 
-        // ── ボス通過痕（地面ひび割れ＆破片スパーク）演出 ──
+        // ── ボス通過痕（足元の土煙＆地面のひび割れ刻み込み）演出 ──
         if (currentPhase_ == GamePhase::kBossFight && bossAppearanceTimer_ <= 0.0f) {
             bossStepCrackTimer_ += kDeltaTime;
-            if (bossStepCrackTimer_ >= 0.15f) { // 0.15秒周期で足元にひび割れ破片を放出
+            if (bossStepCrackTimer_ >= 0.18f) { // 0.18秒周期で左右の足元に土煙とひび割れを生成
                 bossStepCrackTimer_ = 0.0f;
-                float bodyBounce = 0.0f;
-                Vector3 bossPos = GetBossPosition(bodyBounce);
+                Vector3 bossPos = GetBossPosition(0.0f);
+                int li = floorCrackWriteIdx_ % 8;
+                Vector3 crackPos = bossPos;
+
+                if (bossLegTransformData_[li]) {
+                    const Matrix4x4& legW = bossLegTransformData_[li]->World;
+                    Vector3 legRoot = { legW.m[3][0], legW.m[3][1], legW.m[3][2] };
+                    float dx = legRoot.x - bossPos.x;
+                    float dz = legRoot.z - bossPos.z;
+                    float len = std::sqrt(dx * dx + dz * dz);
+                    if (len > 0.001f) {
+                        crackPos.x = legRoot.x + (dx / len) * 18.0f;
+                        crackPos.z = legRoot.z + (dz / len) * 18.0f;
+                    } else {
+                        crackPos = legRoot;
+                    }
+                }
+                crackPos.y = kFloorY + 0.3f;
+
+                std::uniform_real_distribution<float> radDist(16.0f, 22.0f);
+
+                // 1. 地面のひび割れ（シェーダー用リングバッファへ登録）
+                floorCracks_[floorCrackWriteIdx_] = { crackPos.x, kFloorY, crackPos.z, radDist(randomEngine_) };
+                floorCrackWriteIdx_ = (floorCrackWriteIdx_ + 1) % 8;
+
+                // 2. 足元から舞い上がる濃い土煙・砂煙（煙パーティクルのみ使用）
                 if (particleManager_) {
-                    std::uniform_real_distribution<float> crackDist(-18.0f, 18.0f);
-                    Vector3 crackPos = { bossPos.x + crackDist(randomEngine_), kFloorY + 0.3f, bossPos.z + crackDist(randomEngine_) };
-                    // 地面が裂けて砕けるひび割れショックウェーブ & 破片火花
-                    particleManager_->EmitCustomSparks(crackPos, 50.0f, 8, { 0.95f, 0.65f, 0.25f }, 1.2f);
-                    particleManager_->EmitMegaRing(crackPos, { 0.85f, 0.45f, 0.15f });
+                    particleManager_->EmitBossSmoke(crackPos, 4);
                 }
             }
         }
@@ -3131,6 +3311,64 @@ void GamePlayScene::Update() {
         }
     } else if (sceneMode_ == SceneMode::kFighter) {
         // --- 戦闘機（レールシューター）モード ---
+
+        // ── パーティクルコンテスト用スライドショー進行制御 ────────────────
+        if (s_slideshowMode_ && !isTitleMode_) {
+            slideshowTimer_ += kDeltaTime;
+            if (s_slideshowStep_ == 0) {
+                // Slide 0: ボス着地衝撃波＆咆哮を見せた後 Slide 1 へ
+                if (slideshowTimer_ >= 5.5f) {
+                    s_slideshowStep_ = 1;
+                    SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
+                    return;
+                }
+            } else if (s_slideshowStep_ == 1) {
+                // Slide 1: バレルロール＆プレイヤー連射による多彩な属性爆破を見せた後 Slide 2 へ
+                if (slideshowActionStage_ == 0 && slideshowTimer_ >= 0.40f) {
+                    slideshowActionStage_ = 1;
+                    if (!isBarrelRolling_) {
+                        isBoosting_ = true;
+                        isBarrelRolling_ = true;
+                        barrelRollTimer_ = 0.0f;
+                    }
+                } else if (slideshowActionStage_ == 4 && slideshowTimer_ >= 3.70f) {
+                    slideshowActionStage_ = 5;
+                    if (!isBarrelRolling_) {
+                        isBoosting_ = true;
+                        isBarrelRolling_ = true;
+                        barrelRollTimer_ = 0.0f;
+                    }
+                }
+                if (slideshowTimer_ >= 5.6f) {
+                    s_slideshowStep_ = 2;
+                    SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
+                    return;
+                }
+            } else if (s_slideshowStep_ == 2) {
+                // Slide 2: ボスの禍々しい攻撃（振り上げ～落雷・糸レーザー・蜘蛛の巣弾）＆プレイヤー弾の着弾爆破
+                if (slideshowActionStage_ == 0 && slideshowTimer_ >= 0.25f) {
+                    slideshowActionStage_ = 1;
+                    bossActionState_ = BossActionState::kLegAttack;
+                    bossActionTimer_ = 2.2f;
+                    bossAttackTargetArea_ = 1;
+                    isBossAttackTargetLocked_ = false;
+                } else if (slideshowActionStage_ == 1 && slideshowTimer_ >= 4.40f) {
+                    slideshowActionStage_ = 2;
+                    bossActionState_ = BossActionState::kLaserAttack;
+                    bossActionTimer_ = 0.0f;
+                    bossLaserTimer_ = 0.0f;
+                } else if (slideshowActionStage_ == 3 && slideshowTimer_ >= 6.10f) {
+                    slideshowActionStage_ = 4;
+                    bossActionState_ = BossActionState::kWebAttack;
+                    bossActionTimer_ = 0.0f;
+                }
+                if (slideshowTimer_ >= 7.9f) {
+                    s_slideshowStep_ = 3;
+                    SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
+                    return;
+                }
+            }
+        }
 
         // ── ブースト処理（LSHIFTで発動、バレルロール終了と同時に自動で戻る） ────────────────
         bool isBossIntro = (bossAppearanceTimer_ > 0.0f);
@@ -4290,15 +4528,61 @@ void GamePlayScene::Update() {
                 )
             );
 
+            // スライドショー自動射撃（Step 1: プレイヤー連射＆多彩な爆破 / Step 2: ボスへの攻撃着弾 / Step 3: ボスラスト一撃）
+            bool triggerAutoSlideShot = false;
+            Vector3 autoSlideAimTarget = reticlePos;
+            if (s_slideshowMode_ && !isTitleMode_ && !isBossDefeatedSequence_ && !isBossIntro) {
+                if (s_slideshowStep_ == 1) {
+                    int targetEnemyIdx = -1;
+                    if (slideshowActionStage_ == 1 && slideshowTimer_ >= 1.35f) {
+                        slideshowActionStage_ = 2;
+                        selectedEffectPreset_ = 1; // 火炎バースト
+                        targetEnemyIdx = 0;
+                    } else if (slideshowActionStage_ == 2 && slideshowTimer_ >= 2.15f) {
+                        slideshowActionStage_ = 3;
+                        selectedEffectPreset_ = 2; // 超高圧放電
+                        targetEnemyIdx = 1;
+                    } else if (slideshowActionStage_ == 3 && slideshowTimer_ >= 2.95f) {
+                        slideshowActionStage_ = 4;
+                        selectedEffectPreset_ = 5; // 氷結
+                        targetEnemyIdx = 2;
+                    }
+                    if (targetEnemyIdx >= 0 && targetEnemyIdx < static_cast<int>(enemies_.size()) && enemies_[targetEnemyIdx].isAlive) {
+                        autoSlideAimTarget = enemies_[targetEnemyIdx].position;
+                        triggerAutoSlideShot = true;
+                    } else if (targetEnemyIdx >= 0) {
+                        for (const auto& enemy : enemies_) {
+                            if (enemy.isAlive) {
+                                autoSlideAimTarget = enemy.position;
+                                triggerAutoSlideShot = true;
+                                break;
+                            }
+                        }
+                    }
+                } else if (s_slideshowStep_ == 2 && slideshowActionStage_ == 2 && slideshowTimer_ >= 3.90f) {
+                    slideshowActionStage_ = 3;
+                    autoSlideAimTarget = GetBossPosition(0.0f);
+                    triggerAutoSlideShot = true;
+                } else if (s_slideshowStep_ == 3 && currentPhase_ == GamePhase::kBossFight && !hasFiredAutoLastHit_) {
+                    autoLastHitTimer_ += kDeltaTime;
+                    if (autoLastHitTimer_ >= 0.7f) {
+                        hasFiredAutoLastHit_ = true;
+                        autoSlideAimTarget = GetBossPosition(0.0f);
+                        triggerAutoSlideShot = true;
+                    }
+                }
+            }
+
             // ボス登場演出中は射撃を禁止
-            if (input_->IsKeyTriggered(DIK_SPACE) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_) {
+            if ((input_->IsKeyTriggered(DIK_SPACE) || triggerAutoSlideShot) && !(phaseIntroTimer_ >= 0.0f) && !isBossDefeatedSequence_ && !isBossIntro && !isTitleMode_) {
                 // 翼の発射位置をレールのright/up方向で計算
                 Vector3 leftWing  = Add(fighterWorldPos, Add(Scale(playerRailRight, -2.5f), Scale(playerRailUp, 0.8f)));
                 Vector3 rightWing = Add(fighterWorldPos, Add(Scale(playerRailRight,  2.5f), Scale(playerRailUp, 0.8f)));
 
-                Vector3 dirLeft  = Normalize({ reticlePos.x - leftWing.x,  reticlePos.y - leftWing.y,  reticlePos.z - leftWing.z });
-                Vector3 dirRight = Normalize({ reticlePos.x - rightWing.x, reticlePos.y - rightWing.y, reticlePos.z - rightWing.z });
-                float bulletSpeed = 150.0f + boostForwardSpeed_;
+                Vector3 aimTarget = triggerAutoSlideShot ? autoSlideAimTarget : reticlePos;
+                Vector3 dirLeft  = Normalize({ aimTarget.x - leftWing.x,  aimTarget.y - leftWing.y,  aimTarget.z - leftWing.z });
+                Vector3 dirRight = Normalize({ aimTarget.x - rightWing.x, aimTarget.y - rightWing.y, aimTarget.z - rightWing.z });
+                float bulletSpeed = triggerAutoSlideShot ? 260.0f : (150.0f + boostForwardSpeed_);
 
                 for (auto& b : playerBullets_) {
                     if (b.currentTime >= b.lifeTime) {
@@ -4452,13 +4736,9 @@ void GamePlayScene::Update() {
                     bossHP_ -= 4.0f;
                     if (bossHP_ < 0.0f) bossHP_ = 0.0f;
 
-                    // 巨大な蜘蛛の装甲への着弾爆破エフェクトとSE
+                    // 巨大な蜘蛛の装甲への着弾多層爆発エフェクトとSE
                     if (particleManager_) {
-                        const Vector3& hitPos = playerBullets_[i].position;
-                        particleManager_->EmitFlame(hitPos, 28.0f, 16, { 1.0f, 0.35f, 0.05f });
-                        particleManager_->EmitFlame(hitPos, 12.0f, 8, { 1.0f, 0.85f, 0.35f });
-                        particleManager_->EmitCustomSparks(hitPos, 125.0f, 26, { 1.0f, 0.68f, 0.18f }, 2.2f);
-                        particleManager_->EmitRing(hitPos, { 1.0f, 0.45f, 0.10f });
+                        particleManager_->EmitMultiLayerExplosion(playerBullets_[i].position, 1.15f);
                     }
                     cameraShakeTimer_ = 0.08f;
                     cameraShakeIntensity_ = 1.5f;
@@ -4497,14 +4777,9 @@ void GamePlayScene::Update() {
 
                             // 全滅リポップはUpdateの最後で一括判定するため、ここではリポップ処理を行わない
 
-                            // ★★★ リアルな爆破炎上エフェクト！ ★★★
+                            // ★★★ 放射火柱＋もこもこ黒煙＋閃光＆火の粉の多層爆破エフェクト！ ★★★
                             if (particleManager_) {
-                                particleManager_->EmitFlame(deathPos, 35.0f, 22, { 1.0f, 0.32f, 0.04f });
-                                particleManager_->EmitFlame(deathPos, 14.0f, 12, { 1.0f, 0.88f, 0.45f });
-                                particleManager_->EmitCustomSparks(deathPos, 135.0f, 30, { 1.0f, 0.60f, 0.15f }, 1.8f);
-                                particleManager_->EmitCustomSparks(deathPos, 80.0f, 18, { 0.95f, 0.18f, 0.04f }, 2.4f);
-                                particleManager_->EmitMegaRing(deathPos, { 1.0f, 0.45f, 0.12f });
-                                particleManager_->EmitCylinder(deathPos, { 1.0f, 0.30f, 0.05f });
+                                particleManager_->EmitMultiLayerExplosion(deathPos, 1.35f);
                             }
                             cameraShakeTimer_ = 0.14f;
                             cameraShakeIntensity_ = 2.2f;
@@ -4514,8 +4789,10 @@ void GamePlayScene::Update() {
                             // 爆破音を再生
                             PlaySE(jumpSE_, false, 1.5f);
                         } else {
-                            // 生存時は小規模な被弾エフェクトとSE
-                            EmitHitEffect(playerBullets_[i].position);
+                            // 生存時は小規模な多層爆発エフェクトとSE
+                            if (particleManager_) {
+                                particleManager_->EmitMultiLayerExplosion(playerBullets_[i].position, 0.65f);
+                            }
                             PlaySE(jumpSE_, false, 0.6f);
                         }
                         break;
@@ -4546,6 +4823,37 @@ void GamePlayScene::Update() {
             float bodyBounce = std::sin(bossTime_ * 2.0f) * bossBodyBounceRange_;
             Vector3 currentBossPos = GetBossPosition(bodyBounce, 0.0f);
 
+            // 攻撃する右前脚（腕：i=5）のみに紫の煙を纏わせるヘルパー
+            auto emitPurpleArmSmoke = [&](const Vector3& vel) {
+                if (!bossLegTransformData_[5]) return;
+                const Matrix4x4& w = bossLegTransformData_[5]->World;
+                Vector3 legDir = { w.m[2][0], w.m[2][1], w.m[2][2] };
+                Vector3 legRoot = { w.m[3][0], w.m[3][1], w.m[3][2] };
+                float dirLen = std::sqrt(legDir.x * legDir.x + legDir.y * legDir.y + legDir.z * legDir.z);
+                if (dirLen > 0.001f) {
+                    legDir = { legDir.x / dirLen, legDir.y / dirLen, legDir.z / dirLen };
+                }
+                float legLen = bossLegScale_ * 0.55f;
+                Vector3 legTip = Add(legRoot, Scale(legDir, legLen));
+                Vector3 legMid = Scale(Add(legRoot, legTip), 0.5f);
+
+                particleManager_->EmitColoredSmoke(
+                    legRoot, 1,
+                    { 0.66f, 0.12f, 0.94f }, { 0.20f, 0.03f, 0.32f },
+                    2.0f, 0.85f, 2.0f, 0.40f, 4.5f, vel
+                );
+                particleManager_->EmitColoredSmoke(
+                    legMid, 2,
+                    { 0.70f, 0.14f, 0.98f }, { 0.22f, 0.04f, 0.34f },
+                    2.5f, 0.90f, 2.5f, 0.42f, 5.0f, vel
+                );
+                particleManager_->EmitColoredSmoke(
+                    legTip, 2,
+                    { 0.74f, 0.18f, 1.0f }, { 0.22f, 0.04f, 0.34f },
+                    2.5f, 0.85f, 2.5f, 0.42f, 4.5f, vel
+                );
+            };
+
             if (bossActionTimer_ <= 5.0f) {
                 // 1. 接近・振りかぶり溜め (0.0〜5.0秒)
                 float t = bossActionTimer_ / 5.0f;
@@ -4563,64 +4871,13 @@ void GamePlayScene::Update() {
                 }
                 isBossAttackTargetLocked_ = false;
 
-                // ★★★ 紫の雷の溜めエフェクト ★★★
-                // ボス本体の周囲に雷オーラを発生
-                particleManager_->EmitLightning(currentBossPos, 8.0f, 2, lightningColor);
-                
-                // 振りかぶる右前脚（i=5）自体に強烈な紫の電撃オーラを纏わせる
-                if (bossLegTransformData_[5]) {
-                    Matrix4x4 w = bossLegTransformData_[5]->World;
-                    Vector3 legDir = { w.m[2][0], w.m[2][1], w.m[2][2] };
-                    Vector3 legRoot = { w.m[3][0], w.m[3][1], w.m[3][2] };
-                    
-                    float dirLen = std::sqrt(legDir.x * legDir.x + legDir.y * legDir.y + legDir.z * legDir.z);
-                    if (dirLen > 0.001f) {
-                        legDir = { legDir.x / dirLen, legDir.y / dirLen, legDir.z / dirLen };
-                    }
-                    
-                    float legLen = bossLegScale_ * 0.55f;
-                    Vector3 legTip = {
-                        legRoot.x + legDir.x * legLen,
-                        legRoot.y + legDir.y * legLen,
-                        legRoot.z + legDir.z * legLen
-                    };
-                    
-                    Vector3 legMid = {
-                        (legRoot.x + legTip.x) * 0.5f,
-                        (legRoot.y + legTip.y) * 0.5f,
-                        (legRoot.z + legTip.z) * 0.5f
-                    };
-
-                    // 1. 脚全体を包む極太の這いずり電撃オーラ（スケールを負の巨大値 -1.85f に拡張）
-                    // 毎フレーム3組重複して放出することで、脚に絡みつく無数のうねる巨大電撃を生成
-                    for (int k = 0; k < 3; ++k) {
-                        particleManager_->EmitLSystemLightning(legRoot, legTip, 3, -1.85f, lightningColor);
-                    }
-
-                    // 2. 脚の先端・中間・根本から周囲の空間へ大きく弾け飛ぶ放射スパーク
-                    // 半径 15.0f〜24.0f の非常に大きな紫の火花を空間へ放出する
-                    particleManager_->EmitLightning(legTip, 24.0f, 3, lightningColor);
-                    particleManager_->EmitLightning(legMid, 18.0f, 2, lightningColor);
-                    particleManager_->EmitLightning(legRoot, 14.0f, 1, lightningColor);
+                // ★★★ 紫の煙を腕だけに纏わせる ★★★
+                static int meleeChargeSmokeCounter = 0;
+                if ((++meleeChargeSmokeCounter % 2) == 0) {
+                    Vector3 meleeBossDir = GetRailDirection(fighterWorldZ_ + bossZOffset_);
+                    Vector3 meleeBossVel = Scale(meleeBossDir, boostForwardSpeed_ * 0.95f);
+                    emitPurpleArmSmoke(meleeBossVel);
                 }
-
-                // 狙っている地面（ターゲットエリア）にバチバチと警告予兆の雷を落とす
-                float targetX = 0.0f;
-                if (bossAttackTargetArea_ == 0) targetX = -30.0f;
-                else if (bossAttackTargetArea_ == 2) targetX = 30.0f;
-
-                // ターゲット位置のレール座標系を算出
-                float targetProgress = fighterWorldZ_ + 65.0f;
-                Vector3 targetRailPos = GetRailPosition(targetProgress);
-                Vector3 targetRailDir = GetRailDirection(targetProgress);
-                Vector3 targetRailRight = Normalize(Vector3{ targetRailDir.z, 0.0f, -targetRailDir.x });
-                Vector3 targetRailUp = Cross(targetRailDir, targetRailRight);
-                float targetRelY = bossYOffset_ + 14.0f; // -20m路面に対する相対Y
-
-                Vector3 warningPos = Add(targetRailPos, Add(Scale(targetRailRight, targetX), Scale(targetRailUp, targetRelY)));
-                particleManager_->EmitLightning(warningPos, 5.0f, 1, lightningColor);
-                particleManager_->EmitChaosVoid(warningPos, 22.0f, 2, { 0.55f, 0.04f, 0.85f });
-                particleManager_->EmitGravityVortex(currentBossPos, 25.0f, 2, { 0.75f, 0.05f, 0.18f });
 
             } else if (bossActionTimer_ <= 5.3f) {
                 // 2. 振り下ろし叩きつけ (5.0〜5.3秒)
@@ -4630,23 +4887,12 @@ void GamePlayScene::Update() {
                 // 振り下ろし開始時にターゲットエリアをロックオン
                 isBossAttackTargetLocked_ = true;
 
-                // 振り下ろし中も激しいスパークをボスとターゲット先に落とす
-                float targetX = 0.0f;
-                if (bossAttackTargetArea_ == 0) targetX = -30.0f;
-                else if (bossAttackTargetArea_ == 2) targetX = 30.0f;
-
-                float targetProgress = fighterWorldZ_ + 65.0f;
-                Vector3 targetRailPos = GetRailPosition(targetProgress);
-                Vector3 targetRailDir = GetRailDirection(targetProgress);
-                Vector3 targetRailRight = Normalize(Vector3{ targetRailDir.z, 0.0f, -targetRailDir.x });
-                Vector3 targetRailUp = Cross(targetRailDir, targetRailRight);
-                float targetRelY = bossYOffset_ + 14.0f;
-
-                Vector3 warningPos = Add(targetRailPos, Add(Scale(targetRailRight, targetX), Scale(targetRailUp, targetRelY)));
-                particleManager_->EmitLightning(currentBossPos, 12.0f, 2, lightningColor);
-                particleManager_->EmitLightning(warningPos, 12.0f, 2, lightningColor);
-                particleManager_->EmitChaosVoid(currentBossPos, 38.0f, 4, { 0.60f, 0.05f, 0.90f });
-                particleManager_->EmitChaosVoid(warningPos, 35.0f, 4, { 0.85f, 0.06f, 0.22f });
+                static int meleeSwingSmokeCounter = 0;
+                if ((++meleeSwingSmokeCounter % 2) == 0) {
+                    Vector3 meleeSwingDir = GetRailDirection(fighterWorldZ_ + bossZOffset_);
+                    Vector3 meleeSwingVel = Scale(meleeSwingDir, boostForwardSpeed_ * 0.95f);
+                    emitPurpleArmSmoke(meleeSwingVel);
+                }
 
             } else if (bossActionTimer_ <= 6.8f) {
                 // 3. 戻り (5.3〜6.8秒)
@@ -4669,19 +4915,7 @@ void GamePlayScene::Update() {
                 Vector3 bossRailUp = Cross(bossRailDir, bossRailRight);
 
                 if (strikeElapsed <= 0.05f) {
-                    // ① 先行微光 (Leader) [0.00s 〜 0.05s / 約3フレーム]
-                    float targetX = 0.0f;
-                    if (bossAttackTargetArea_ == 0) targetX = -30.0f;
-                    else if (bossAttackTargetArea_ == 2) targetX = 30.0f;
-
-                    Vector3 impactPos = Add(targetRailPos, Add(Scale(targetRailRight, targetX), Scale(targetRailUp, targetRelY)));
-                    Vector3 lightningStart = Add(bossRailPos, Add(Scale(bossRailUp, bossYOffset_ + 16.0f), Scale(bossRailDir, -15.0f)));
-                    
-                    // 暗めの紫色 (-0.18fスケールで細い枝として生成)
-                    Vector3 leaderColor = { 0.35f, 0.02f, 0.5f };
-                    particleManager_->EmitLSystemLightning(lightningStart, impactPos, 3, -0.18f, leaderColor);
-                    
-                    // ポストプロセスフラッシュもまだ極小
+                    // ① 先行フェーズ [0.00s 〜 0.05s]（ポストプロセスのみ）
                     activePostProcess_ = kVignette;
                     // 雷のX座標をUV座標にマッピング (-30➔0.16, 0➔0.5, 30➔0.84)
                     float targetUvX = 0.5f;
@@ -4691,13 +4925,12 @@ void GamePlayScene::Update() {
                     vignetteParamData_->power = 10.0f + 0.15f; // ごく僅かな明かり
 
                 } else if (strikeElapsed <= 0.10f) {
-                    // ② 本落雷 (Return Stroke) [0.05s 〜 0.10s / 約3フレーム]
+                    // ② 叩きつけ瞬間 [0.05s 〜 0.10s]
                     float targetX = 0.0f;
                     if (bossAttackTargetArea_ == 0) targetX = -30.0f;
                     else if (bossAttackTargetArea_ == 2) targetX = 30.0f;
 
                     Vector3 impactPos = Add(targetRailPos, Add(Scale(targetRailRight, targetX), Scale(targetRailUp, targetRelY)));
-                    Vector3 lightningStart = Add(bossRailPos, Add(Scale(bossRailUp, bossYOffset_ + 16.0f), Scale(bossRailDir, -15.0f)));
 
                     if (!hasShaken) {
                         cameraShakeTimer_ = 0.78f;
@@ -4711,18 +4944,10 @@ void GamePlayScene::Update() {
                         debrisEmitPos_ = Add(targetRailPos, Scale(targetRailRight, targetX));
                         debrisEmitCount_ = 30000;
 
-                        // 極太の主幹雷撃(1.6fスケール)＋禍々しい紫黒・深紅の闇雷撃を走らせる
-                        particleManager_->EmitLSystemLightning(lightningStart, impactPos, 4, 1.6f, lightningColor);
-                        particleManager_->EmitLSystemLightning(lightningStart, impactPos, 3, 1.1f, { 0.85f, 0.08f, 0.35f });
-
-                        // 禍々しいカオス瘴気・紅蓮の爆炎・巨大衝撃波と大音響SE
-                        particleManager_->EmitChaosVoid(impactPos, 55.0f, 28, { 0.60f, 0.04f, 0.90f });
-                        particleManager_->EmitGravityVortex(impactPos, 40.0f, 18, { 0.85f, 0.05f, 0.22f });
-                        particleManager_->EmitLightning(impactPos, 75.0f, 22, { 1.0f, 0.10f, 0.28f });
-                        particleManager_->EmitFlame(impactPos, 45.0f, 18, { 0.95f, 0.12f, 0.18f });
-                        particleManager_->EmitMegaRing(impactPos, { 0.75f, 0.08f, 0.92f });
-                        particleManager_->EmitCylinder(impactPos, { 0.90f, 0.08f, 0.25f });
-                        particleManager_->EmitCustomSparks(impactPos, 110.0f, 26, { 1.0f, 0.25f, 0.45f }, 1.6f);
+                        // 叩きつけ時は腕へ追加の紫煙を纏わせ、大音響SEを鳴らす
+                        Vector3 impactArmVel = Scale(targetRailDir, boostForwardSpeed_ * 0.95f);
+                        emitPurpleArmSmoke(impactArmVel);
+                        emitPurpleArmSmoke(impactArmVel);
                         PlaySE(jumpSE_, false, 1.7f);
 
                         // ダメージ判定
@@ -5010,14 +5235,12 @@ void GamePlayScene::Update() {
             if (bossProgress >= jumpStart && bossProgress < jumpEnd) {
                 if (!hasEmittedJumpStart_) {
                     hasEmittedJumpStart_ = true;
-                    // 踏み切り！石や土の飛び散りエフェクト
+                    // 踏み切り！濃い土煙エフェクト（煙のみ）
                     Vector3 jumpStartPos = GetBossPosition(0.0f, 0.0f, 0.0f);
-                    EmitHitEffect(jumpStartPos);
-                    for (int k = 0; k < 20; ++k) {
-                        particleManager_->EmitHit(jumpStartPos);
+                    jumpStartPos.y = kFloorY + 0.3f;
+                    if (particleManager_) {
+                        particleManager_->EmitBossSmoke(jumpStartPos, 8);
                     }
-                    particleManager_->EmitRing(jumpStartPos, {0.8f, 0.5f, 0.2f}); // 土煙リング
-                    particleManager_->EmitCylinder(jumpStartPos, {0.6f, 0.4f, 0.2f});
                     if (audio_) {
                         PlaySE(jumpSE_, false, 1.8f); // 踏み切り音
                     }
@@ -5026,14 +5249,14 @@ void GamePlayScene::Update() {
             else if (bossProgress >= jumpEnd && bossProgress < landEnd) {
                 if (!hasEmittedJumpEnd_) {
                     hasEmittedJumpEnd_ = true;
-                    // 着地！激しい土砂飛び散り
+                    // 着地！濃い土煙と地面ひび割れ（煙のみ）
                     Vector3 jumpEndPos = GetBossPosition(0.0f, 0.0f, 0.0f);
-                    EmitHitEffect(jumpEndPos);
-                    for (int k = 0; k < 25; ++k) {
-                        particleManager_->EmitHit(jumpEndPos);
+                    jumpEndPos.y = kFloorY + 0.3f;
+                    floorCracks_[floorCrackWriteIdx_] = { jumpEndPos.x, kFloorY, jumpEndPos.z, 24.0f };
+                    floorCrackWriteIdx_ = (floorCrackWriteIdx_ + 1) % 8;
+                    if (particleManager_) {
+                        particleManager_->EmitBossSmoke(jumpEndPos, 10);
                     }
-                    particleManager_->EmitRing(jumpEndPos, {0.8f, 0.5f, 0.2f});
-                    particleManager_->EmitCylinder(jumpEndPos, {0.6f, 0.4f, 0.2f});
                     if (audio_) {
                         PlaySE(jumpSE_, false, 2.0f); // 着地音
                     }
@@ -5818,6 +6041,13 @@ void GamePlayScene::Update() {
                     bossLightData_->emissiveIntensity = 1.0f;
                 }
             }
+            if (floorLightData_) {
+                *floorLightData_ = *directionalLightData_;
+                floorLightData_->enableNightEmissive = 4;
+                for (int c = 0; c < 8; ++c) {
+                    floorLightData_->streetLampPositions[8 + c] = floorCracks_[c];
+                }
+            }
         }
     }
 
@@ -6057,11 +6287,11 @@ void GamePlayScene::Update() {
                                 buildings_[i].rotationSpeed = { rx * 3.0f, ry * 3.0f, rz * 3.0f };
                             }
 
-                            // 衝突時エフェクトの発生
-                            EmitHitEffect(buildings_[i].position);
+                            // 衝突時エフェクトの発生（オレンジ系の炎・火花は出さず煙のみ）
                             if (particleManager_) {
-                                particleManager_->EmitCustomSparks(buildings_[i].position, 25.0f, 15, { 1.0f, 0.5f, 0.1f }, 1.0f);
-                                particleManager_->EmitFlame(buildings_[i].position, 15.0f, 10, { 1.0f, 0.3f, 0.0f });
+                                Vector3 debrisSmokePos = buildings_[i].position;
+                                debrisSmokePos.y = kFloorY + 0.3f;
+                                particleManager_->EmitBossSmoke(debrisSmokePos, 5);
                             }
                         }
                     }
@@ -6800,9 +7030,13 @@ void GamePlayScene::Draw() {
                 fighterModel_->DrawModel(commandList, TextureManager::GetInstance()->GetSrvHandleGPU("Player2/Player_basecolor.JPEG"), TextureManager::GetInstance()->GetSrvHandleGPU("test.dds"));
             }
 
-            // 床(Plane)描画 (標準 douro.jpg & 300m置き十字路 juziro.jpg)
+            // 床(Plane)描画 (標準 douro.jpg & 300m置き十字路 juziro.jpg、ボスの足跡ひび割れシェーダー適用)
             if (floorModel_ && !isIntroMapPhase) {
-                if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
+                if (floorLightResource_) {
+                    commandList->SetGraphicsRootConstantBufferView(4, floorLightResource_->GetGPUVirtualAddress());
+                } else if (directionalLightResource_) {
+                    commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
+                }
                 if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
 
                 D3D12_GPU_DESCRIPTOR_HANDLE douroSrv = TextureManager::GetInstance()->GetSrvHandleGPU("douro.jpg");
@@ -7234,6 +7468,14 @@ void GamePlayScene::Draw() {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
             commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
+            // 1. 先に火事煙・爆煙パーティクルを描画（通常アルファブレンド＋SmokeParticleシェーダー）
+            //    ※加算合成の炎より先に描くことで、黒煙の中から赤い炎が鮮やかに発光する
+            if (graphicsPipeline_->GetSmokeParticlePipelineState()) {
+                commandList->SetPipelineState(graphicsPipeline_->GetSmokeParticlePipelineState());
+                particleManager_->DrawSmoke(commandList, particleModel_.get(), textureSrvHandleGPU_);
+            }
+
+            // 2. 加算合成の炎・火花・衝撃波パーティクルを描画
             BlendMode blendMode = useAdditiveBlend_ ? kBlendModeAdd : kBlendModeNormal;
             if (graphicsPipeline_->GetPipelineState(blendMode)) {
                 commandList->SetPipelineState(graphicsPipeline_->GetPipelineState(blendMode));
@@ -7248,12 +7490,6 @@ void GamePlayScene::Draw() {
                     gradationSrvHandleGPU_,
                     textSrvHandleGPU_
                 );
-            }
-
-            // 火事煙パーティクルの描画（通常アルファブレンド＋SmokeParticleシェーダー）
-            if (graphicsPipeline_->GetSmokeParticlePipelineState()) {
-                commandList->SetPipelineState(graphicsPipeline_->GetSmokeParticlePipelineState());
-                particleManager_->DrawSmoke(commandList, particleModel_.get(), textureSrvHandleGPU_);
             }
 
             // スプライト（テキスト）の描画

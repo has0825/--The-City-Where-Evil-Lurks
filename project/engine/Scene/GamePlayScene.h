@@ -74,6 +74,10 @@ public:
     
     // タイトル背景モードの設定・取得
     void SetTitleMode(bool isTitle) { isTitleMode_ = isTitle; }
+
+    // パーティクルコンテスト用スライドショー制御
+    static bool IsSlideshowMode() { return s_slideshowMode_; }
+    static void SetSlideshowStep(int step) { s_slideshowStep_ = step; }
     bool IsTitleMode() const { return isTitleMode_; }
     void TriggerTitleTransitionBoost();
 
@@ -592,6 +596,10 @@ private:
     TransformationMatrix* bossLegTransformData_[8] = { nullptr };
     Microsoft::WRL::ComPtr<ID3D12Resource> bossLightResource_;
     DirectionalLight* bossLightData_ = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> floorLightResource_;
+    DirectionalLight* floorLightData_ = nullptr;
+    Vector4 floorCracks_[8] = {};
+    int floorCrackWriteIdx_ = 0;
 
     // 蜘蛛ボス調整パラメータ (ImGuiで調整可能)
     float bossScale_ = 4.5f;           // 全体の基本スケール
@@ -833,6 +841,12 @@ private:
     // 確認ループ用：ラスト一撃自動撃破デモタイマー
     float autoLastHitTimer_ = 0.0f;
     bool hasFiredAutoLastHit_ = false;
+
+    // パーティクルエフェクト鑑賞用スライドショー制御
+    static inline bool s_slideshowMode_ = true;
+    static inline int s_slideshowStep_ = 0; // 0:ボス登場, 1:バレルロール＆敵爆破, 2:ボス攻撃, 3:ボス撃破
+    float slideshowTimer_ = 0.0f;
+    int slideshowActionStage_ = 0;
 
     // ── 地形(Terrain)用 ──
     std::unique_ptr<Model> terrainModel_;

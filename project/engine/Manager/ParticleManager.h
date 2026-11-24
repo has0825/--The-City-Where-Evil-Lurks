@@ -109,6 +109,19 @@ public:
     void EmitSkywritingFirework(const Vector3& emitterPos, const Vector3& color);
     void EmitSkywritingCloud(const Vector3& emitterPos);
     void EmitBossSmoke(const Vector3& emitterPos, int count = 4);
+    void EmitColoredSmoke(
+        const Vector3& emitterPos,
+        int count,
+        const Vector3& startColor,
+        const Vector3& endColor,
+        float speed = 22.0f,
+        float scaleFactor = 1.0f,
+        float upwardBias = 12.0f,
+        float lifeScale = 1.0f,
+        float spreadRadius = 2.5f,
+        const Vector3& inheritVel = { 0.0f, 0.0f, 0.0f }
+    );
+    void EmitMultiLayerExplosion(const Vector3& emitterPos, float scaleFactor = 1.0f);
     void EmitLSystemLightning(const Vector3& startPos, const Vector3& endPos, int depth, float scale, const Vector3& color);
 
 private:

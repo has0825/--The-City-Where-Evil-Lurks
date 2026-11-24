@@ -1,4 +1,5 @@
 #include "ClearScene.h"
+#include "GamePlayScene.h"
 #include "SceneManager.h"
 #include "WinApp.h"
 #include "TextureManager.h"
@@ -393,8 +394,9 @@ void ClearScene::Update() {
 
     clearStayTimer_ += kDeltaTime;
 
-    // スペースキーで「手前接近→遠くへ飛び去り→星輝き」演出を開始
-    if (!isReturningToTitle_ && input_->IsKeyTriggered(DIK_SPACE)) {
+    bool isSlideshow = GamePlayScene::IsSlideshowMode();
+    // スペースキー押下、またはスライドショー中は3.5秒後に「手前接近→遠くへ飛び去り→星輝き」演出を開始
+    if (!isReturningToTitle_ && (input_->IsKeyTriggered(DIK_SPACE) || (isSlideshow && clearStayTimer_ >= 3.5f))) {
         if (playerModel_) {
             isReturningToTitle_ = true;
             hasTriggeredStarFlash_ = false;
@@ -413,18 +415,28 @@ void ClearScene::Update() {
                 particleManager_->Clear();
             }
             activeFireworks_.clear();
-            SceneManager::GetInstance()->ChangeScene("TITLE");
+            if (isSlideshow) {
+                GamePlayScene::SetSlideshowStep(0);
+                SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
+            } else {
+                SceneManager::GetInstance()->ChangeScene("TITLE");
+            }
             return;
         }
     }
 
-    // 接近・星輝き演出完了後にタイトルへ遷移
+    // 接近・星輝き演出完了後に遷移（スライドショー中はSlide 0へループ）
     if (isReturningToTitle_ && returnTimer_ >= kReturnDuration) {
         if (particleManager_) {
             particleManager_->Clear();
         }
         activeFireworks_.clear();
-        SceneManager::GetInstance()->ChangeScene("TITLE");
+        if (isSlideshow) {
+            GamePlayScene::SetSlideshowStep(0);
+            SceneManager::GetInstance()->ChangeScene("GAMEPLAY");
+        } else {
+            SceneManager::GetInstance()->ChangeScene("TITLE");
+        }
         return;
     }
 }
