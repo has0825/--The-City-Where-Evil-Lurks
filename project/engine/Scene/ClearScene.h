@@ -73,6 +73,7 @@ private:
     // タイトル遷移時のプレイヤー演出用
     bool isReturningToTitle_ = false;
     bool hasTriggeredStarFlash_ = false;
+    float clearStayTimer_ = 0.0f;
     float returnTimer_ = 0.0f;
     Vector3 returnStartPos_{};
     Vector3 returnStartRot_{};

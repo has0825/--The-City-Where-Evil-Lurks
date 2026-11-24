@@ -590,6 +590,8 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D12Resource> bossLegTransformResources_[8];
     TransformationMatrix* bossLegTransformData_[8] = { nullptr };
+    Microsoft::WRL::ComPtr<ID3D12Resource> bossLightResource_;
+    DirectionalLight* bossLightData_ = nullptr;
 
     // 蜘蛛ボス調整パラメータ (ImGuiで調整可能)
     float bossScale_ = 4.5f;           // 全体の基本スケール
@@ -827,6 +829,10 @@ private:
     BossPartPhysics bossLegDebris_[8]{};
     float bossDebrisSparkTimer_ = 0.0f;
     int bossCollapseExplosionCount_ = 0;
+
+    // 確認ループ用：ラスト一撃自動撃破デモタイマー
+    float autoLastHitTimer_ = 0.0f;
+    bool hasFiredAutoLastHit_ = false;
 
     // ── 地形(Terrain)用 ──
     std::unique_ptr<Model> terrainModel_;

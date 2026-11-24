@@ -98,13 +98,13 @@ struct DirectionalLight {
 	float padding[3];
 
 	// 夜ステージ用：街灯ポイントライト＆窓・電球エミッシブ
-	uint32_t enableNightEmissive; // 0: 無効, 1: ビル窓明かり, 2: 街灯電球
+	uint32_t enableNightEmissive; // 0: 無効, 1: ビル窓明かり, 2: 街灯電球, 3: ボス目発光
 	float streetLampIntensity;
 	float streetLampRange;
 	uint32_t numStreetLamps;
 	Vector4 streetLampPositions[16]; // xyz: 電球ワールド座標, w: 未使用
 	Vector3 streetLampColor;
-	float lampPad;
+	float emissiveIntensity;
 };
 
 

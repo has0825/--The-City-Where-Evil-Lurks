@@ -115,6 +115,16 @@ PixelShaderOutput main(VertexShaderOutput input)
             float32_t bulbMask = smoothstep(0.38f, 0.70f, bulbLum);
             nightEmissive = textureColor.rgb * bulbMask * 2.2f;
         }
+        else if (gDirectionalLight.enableNightEmissive == 3u)
+        {
+            // ボスの目・赤色エネルギーラインの自己発光と機能停止時の消灯減衰
+            float32_t redness = saturate((textureColor.r - max(textureColor.g, textureColor.b)) * 3.0f - 0.25f);
+            float32_t eyePower = saturate(gDirectionalLight.emissiveIntensity);
+            nightEmissive = float32_t3(1.0f, 0.12f, 0.08f) * redness * 2.4f * eyePower;
+            // 機能停止に伴い、赤い目部分のベース色自体も暗く落とす
+            float32_t eyeDim = lerp(1.0f, 0.08f, (1.0f - eyePower) * redness);
+            textureColor.rgb *= eyeDim;
+        }
 
         output.color.rgb = textureColor.rgb * gMaterial.color.rgb * lightingColor + nightEmissive;
         output.color.a = textureColor.a * gMaterial.color.a;

@@ -828,6 +828,17 @@ void GamePlayScene::Initialize() {
         bossLegTransformData_[i]->color = { 1.0f, 1.0f, 1.0f, 1.0f };
     }
 
+    // ボス胴体専用ライト（目の赤色発光＆撃破時の機能停止消灯用）
+    bossLightResource_ = CreateBufferResource(device, sizeof(DirectionalLight));
+    bossLightResource_->Map(0, nullptr, reinterpret_cast<void**>(&bossLightData_));
+    if (directionalLightData_) {
+        *bossLightData_ = *directionalLightData_;
+    } else {
+        *bossLightData_ = {};
+    }
+    bossLightData_->enableNightEmissive = 3;
+    bossLightData_->emissiveIntensity = 1.0f;
+
     // 蜘蛛の巣テクスチャのロードとSRV取得
     TextureManager::GetInstance()->LoadTexture("spider web.png");
     spiderWebSrvHandleGPU_ = TextureManager::GetInstance()->GetSrvHandleGPU("spider web.png");
@@ -2045,17 +2056,17 @@ void GamePlayScene::Update() {
                 float ang = (static_cast<float>(li) / 8.0f) * 2.0f * static_cast<float>(M_PI);
                 outDir = { std::cos(ang), 0.0f, std::sin(ang) };
             }
-            float outSpeed = 16.0f + dist01(randomEngine_) * 16.0f;
-            float upSpeed = 12.0f + dist01(randomEngine_) * 14.0f;
+            float outSpeed = 10.0f + dist01(randomEngine_) * 8.0f;
+            float upSpeed = 13.0f + dist01(randomEngine_) * 10.0f;
             bossLegDebris_[li].velocity = {
-                outDir.x * outSpeed + (dist01(randomEngine_) - 0.5f) * 6.0f,
+                outDir.x * outSpeed + (dist01(randomEngine_) - 0.5f) * 4.0f,
                 upSpeed,
-                outDir.z * outSpeed + (dist01(randomEngine_) - 0.5f) * 6.0f
+                outDir.z * outSpeed + (dist01(randomEngine_) - 0.5f) * 4.0f
             };
             bossLegDebris_[li].angVel = {
-                (dist01(randomEngine_) - 0.5f) * 1.4f,
-                (dist01(randomEngine_) - 0.5f) * 3.8f,
-                (dist01(randomEngine_) - 0.5f) * 1.4f
+                (dist01(randomEngine_) - 0.5f) * 0.65f,
+                (dist01(randomEngine_) - 0.5f) * 3.2f,
+                (dist01(randomEngine_) - 0.5f) * 0.65f
             };
         }
         
@@ -2117,22 +2128,22 @@ void GamePlayScene::Update() {
         Vector3 targetCamPos = Add(
             bossPos,
             Add(
-                Scale(bRailDir, -75.0f),
+                Scale(bRailDir, -310.0f),
                 Add(
                     Scale(bRailRight, 10.0f + std::sin(bossDefeatTimer_ * 0.4f) * 3.0f),
-                    Scale(bRailUp, 165.0f)
+                    Scale(bRailUp, 245.0f)
                 )
             )
         );
 
-        // 開始フレームは即座に俯瞰位置へ配置し、パンアップ開始(3.8s以降)はカメラ位置をその場に固定する
+        // 開始フレームは即座に俯瞰位置へ配置し、パンアップ開始(5.0s以降)はカメラ位置をその場に固定する
         bool isStartFrame = (bossDefeatTimer_ <= kDeltaTime * 1.5f);
         if (panT <= 0.0f) {
             camTrans.translate = isStartFrame ? targetCamPos : Lerp(camTrans.translate, targetCamPos, 0.08f);
         }
 
-        // ボスが少し地面側へ沈むため、やや下寄りを注視する
-        Vector3 lookTarget = Add(bossPos, { 0.0f, -6.0f, 0.0f });
+        // 崩れ落ちるボスの中心にフォーカスして見下ろし角度を合わせる
+        Vector3 lookTarget = hasHitBoss_ ? Add(bossBodyDebris_.initialPos, bossBodyDebris_.offset) : bossPos;
         Vector3 lookDir = Subtract(lookTarget, camTrans.translate);
         float lookDist = Length(lookDir);
         if (lookDist > 0.001f) {
@@ -2181,7 +2192,7 @@ void GamePlayScene::Update() {
                 if (particleManager_) {
                     particleManager_->EmitFlame(expPos, 10.0f, 14, { 1.0f, 0.55f, 0.15f });
                     particleManager_->EmitCustomSparks(expPos, 95.0f, 16, { 1.0f, 0.75f, 0.25f }, 1.8f);
-                    particleManager_->EmitBossSmoke(expPos, 6);
+                    particleManager_->EmitBossSmoke(expPos, 3);
                 }
                 cameraShakeTimer_ = 0.18f;
                 cameraShakeIntensity_ = shakePower;
@@ -2229,9 +2240,9 @@ void GamePlayScene::Update() {
                         if (outLen > 0.01f) {
                             outDir = Scale(outDir, 1.0f / outLen);
                         }
-                        part.offset.x = outDir.x * 4.0f * easeKneel;
-                        part.offset.z = outDir.z * 4.0f * easeKneel;
-                        part.offset.y = -1.5f * easeKneel;
+                        part.offset.x = outDir.x * 2.8f * easeKneel;
+                        part.offset.z = outDir.z * 2.8f * easeKneel;
+                        part.offset.y = -0.8f * easeKneel;
                     }
 
                     float jitterAmp = isBody ? 0.18f : 0.25f;
@@ -2260,6 +2271,50 @@ void GamePlayScene::Update() {
                     part.rotAngle.x += part.angVel.x * kDeltaTime;
                     part.rotAngle.y += part.angVel.y * kDeltaTime;
                     part.rotAngle.z += part.angVel.z * kDeltaTime;
+                    if (!isBody) {
+                        part.rotAngle.x = std::clamp(part.rotAngle.x, -0.55f, 0.55f);
+                        part.rotAngle.z = std::clamp(part.rotAngle.z, -0.55f, 0.55f);
+                    }
+
+                    // ビルとの当たり判定：吹き飛んだパーツがビルにめり込まないよう押し戻して跳ね返す
+                    float partRadius = isBody ? 14.0f : 11.0f;
+                    float partNowX = part.initialPos.x + part.offset.x;
+                    float partNowY = part.initialPos.y + part.offset.y;
+                    float partNowZ = part.initialPos.z + part.offset.z;
+                    for (size_t b = 0; b < buildings_.size(); ++b) {
+                        if (buildings_[b].floors <= 0 || buildings_[b].isDestroyed) continue;
+                        float dx = partNowX - buildings_[b].position.x;
+                        float dz = partNowZ - buildings_[b].position.z;
+                        if (std::abs(dx) > 65.0f || std::abs(dz) > 65.0f) continue;
+
+                        float bHalfX = (std::max)(buildings_[b].scale.x * 0.65f, 14.0f);
+                        float bHalfZ = (std::max)(buildings_[b].scale.z * 0.65f, 14.0f);
+                        float bTopY = buildings_[b].position.y + static_cast<float>(buildings_[b].floors) * 10.0f;
+                        if (partNowY >= bTopY + partRadius) continue;
+
+                        float penX = (bHalfX + partRadius) - std::abs(dx);
+                        float penZ = (bHalfZ + partRadius) - std::abs(dz);
+                        if (penX > 0.0f && penZ > 0.0f) {
+                            if (penX < penZ) {
+                                float signX = (dx >= 0.0f) ? 1.0f : -1.0f;
+                                part.offset.x += signX * penX;
+                                partNowX += signX * penX;
+                                if (part.velocity.x * signX < 0.0f) {
+                                    part.velocity.x = -part.velocity.x * 0.45f;
+                                }
+                            } else {
+                                float signZ = (dz >= 0.0f) ? 1.0f : -1.0f;
+                                part.offset.z += signZ * penZ;
+                                partNowZ += signZ * penZ;
+                                if (part.velocity.z * signZ < 0.0f) {
+                                    part.velocity.z = -part.velocity.z * 0.45f;
+                                }
+                            }
+                            if (particleManager_) {
+                                particleManager_->EmitCustomSparks({ partNowX, partNowY, partNowZ }, 60.0f, 6, { 1.0f, 0.72f, 0.25f }, 1.8f);
+                            }
+                        }
+                    }
 
                     float currentY = part.initialPos.y + part.offset.y;
                     if (currentY <= floorHeight) {
@@ -2302,9 +2357,9 @@ void GamePlayScene::Update() {
                 cbData->World = Multiply(part.initialWorld, deltaWorld);
             };
 
-            updatePartPhysics(bossBodyDebris_, bossBodyTransformData_, kFloorY + 8.5f, 0.18f, 46.0f, true);
+            updatePartPhysics(bossBodyDebris_, bossBodyTransformData_, kFloorY + 10.5f, 0.18f, 46.0f, true);
             for (int li = 0; li < 8; ++li) {
-                updatePartPhysics(bossLegDebris_[li], bossLegTransformData_[li], kFloorY + 12.5f, 0.28f, 42.0f, false);
+                updatePartPhysics(bossLegDebris_[li], bossLegTransformData_[li], kFloorY + 15.5f, 0.28f, 42.0f, false);
             }
 
             // 機能停止後の余韻：壊れた胴体や脚からショート火花と立ち昇る煙が出る
@@ -2314,13 +2369,16 @@ void GamePlayScene::Update() {
                     Vector3 bodyNow = Add(bossBodyDebris_.initialPos, bossBodyDebris_.offset);
                     particleManager_->EmitCustomSparks(bodyNow, 50.0f, 6, { 0.45f, 0.85f, 1.0f }, 1.6f);
                     if (bossDefeatHitTimer_ >= 0.65f) {
-                        particleManager_->EmitBossSmoke(bodyNow, 2);
+                        particleManager_->EmitBossSmoke(bodyNow, 1);
                     }
                     int rLeg = rand() % 8;
                     Vector3 legNow = Add(bossLegDebris_[rLeg].initialPos, bossLegDebris_[rLeg].offset);
                     particleManager_->EmitCustomSparks(legNow, 45.0f, 5, { 1.0f, 0.7f, 0.2f }, 1.8f);
                     if (bossDefeatHitTimer_ >= 0.65f) {
                         particleManager_->EmitBossSmoke(legNow, 1);
+                        int rLeg2 = (rLeg + 3) % 8;
+                        Vector3 legNow2 = Add(bossLegDebris_[rLeg2].initialPos, bossLegDebris_[rLeg2].offset);
+                        particleManager_->EmitBossSmoke(legNow2, 1);
                     }
                 }
             }
@@ -5744,6 +5802,22 @@ void GamePlayScene::Update() {
                 *streetLampLightData_ = *directionalLightData_;
                 streetLampLightData_->enableNightEmissive = 2;
             }
+            if (bossLightData_) {
+                *bossLightData_ = *directionalLightData_;
+                bossLightData_->enableNightEmissive = 3;
+                if (isBossDefeatedSequence_ && hasHitBoss_) {
+                    // 機能停止に伴い、電圧低下による不安定な明滅を挟みながらボスの目を徐々に消灯する
+                    float fadeOut = 1.0f - std::clamp(bossDefeatHitTimer_ / 2.2f, 0.0f, 1.0f);
+                    float flicker = 1.0f;
+                    if (bossDefeatHitTimer_ > 0.25f && bossDefeatHitTimer_ < 1.85f) {
+                        float wave = std::sin(bossDefeatHitTimer_ * 42.0f) * std::cos(bossDefeatHitTimer_ * 17.0f);
+                        flicker = (wave < -0.35f) ? 0.25f : 1.0f;
+                    }
+                    bossLightData_->emissiveIntensity = fadeOut * flicker;
+                } else {
+                    bossLightData_->emissiveIntensity = 1.0f;
+                }
+            }
         }
     }
 
@@ -6992,8 +7066,9 @@ void GamePlayScene::Draw() {
                     if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
                     if (cameraResource_) commandList->SetGraphicsRootConstantBufferView(5, cameraResource_->GetGPUVirtualAddress());
 
-                    // 胴体の描画 (常にオリジナル高画質モデルを使用)
+                    // 胴体の描画 (常にオリジナル高画質モデルを使用、目発光・消灯用ライト適用)
                     if (bossBodyModel_ && bossBodyTransformResource_) {
+                        if (bossLightResource_) commandList->SetGraphicsRootConstantBufferView(4, bossLightResource_->GetGPUVirtualAddress());
                         commandList->SetGraphicsRootConstantBufferView(1, bossBodyTransformResource_->GetGPUVirtualAddress());
                         bossBodyModel_->DrawModel(
                             commandList,
@@ -7002,7 +7077,8 @@ void GamePlayScene::Draw() {
                         );
                     }
 
-                    // 足の描画（常にオリジナル高画質モデルを使用 ＆ バインドを1回に集約して高速化）
+                    // 足の描画（標準ライトに戻し、オリジナル高画質モデルを使用 ＆ バインドを1回に集約して高速化）
+                    if (directionalLightResource_) commandList->SetGraphicsRootConstantBufferView(4, directionalLightResource_->GetGPUVirtualAddress());
                     if (bossLegModel_) {
                         D3D12_VERTEX_BUFFER_VIEW vbView = bossLegModel_->GetVertexBufferView();
                         D3D12_INDEX_BUFFER_VIEW ibView = bossLegModel_->GetIndexBufferView();
@@ -7074,10 +7150,10 @@ void GamePlayScene::Draw() {
             }
         }
         
-        // エイミング(レティクル)の描画 (ボス登場演出中および画面外からの突入配置中は非表示)
+        // エイミング(レティクル)の描画 (ボス登場演出中・撃破演出中および画面外からの突入配置中は非表示)
         bool isBossIntro = (bossAppearanceTimer_ > 0.0f);
         bool hideReticleForTransition = !isTitleMode_ && LoadingScreen::GetInstance()->ShouldHideInGamePlayer();
-        if (!isBossIntro && !isTitleMode_ && !hideReticleForTransition && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
+        if (!isBossIntro && !isBossDefeatedSequence_ && !isTitleMode_ && !hideReticleForTransition && graphicsPipeline_ && graphicsPipeline_->GetRootSignature()) {
             commandList->SetGraphicsRootSignature(graphicsPipeline_->GetRootSignature());
             commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             if (graphicsPipeline_->GetPipelineState(kBlendModeNormal)) {

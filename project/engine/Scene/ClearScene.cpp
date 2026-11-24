@@ -124,6 +124,7 @@ void ClearScene::Initialize() {
 
     isReturningToTitle_ = false;
     hasTriggeredStarFlash_ = false;
+    clearStayTimer_ = 0.0f;
     returnTimer_ = 0.0f;
 }
 
@@ -390,6 +391,8 @@ void ClearScene::Update() {
         nightSkyData_->time = time_;
     }
 
+    clearStayTimer_ += kDeltaTime;
+
     // スペースキーで「手前接近→遠くへ飛び去り→星輝き」演出を開始
     if (!isReturningToTitle_ && input_->IsKeyTriggered(DIK_SPACE)) {
         if (playerModel_) {
@@ -415,7 +418,7 @@ void ClearScene::Update() {
         }
     }
 
-    // 接近演出完了後にタイトルへ遷移
+    // 接近・星輝き演出完了後にタイトルへ遷移
     if (isReturningToTitle_ && returnTimer_ >= kReturnDuration) {
         if (particleManager_) {
             particleManager_->Clear();

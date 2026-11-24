@@ -435,7 +435,7 @@ void ParticleManager::Update(
 
         float fadeIn = std::clamp(tNorm / 0.12f, 0.0f, 1.0f);
         float fadeOut = std::pow(1.0f - tNorm, 1.25f);
-        smokeParticles_[i].color.w = 0.68f * fadeIn * fadeOut;
+        smokeParticles_[i].color.w = 0.55f * fadeIn * fadeOut;
 
         Matrix4x4 scaleMat = Matrix4x4MakeScaleMatrix(finalScale);
         Matrix4x4 worldMatrix = Multiply(scaleMat, billboardMatrix);
@@ -2075,7 +2075,7 @@ void ParticleManager::EmitSkywritingCloud(const Vector3& emitterPos) {
 void ParticleManager::EmitBossSmoke(const Vector3& emitterPos, int count) {
     int emitCount = count;
     std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
-    std::uniform_real_distribution<float> distJitter(-4.0f, 4.0f);
+    std::uniform_real_distribution<float> distJitter(-1.8f, 1.8f);
 
     for (uint32_t p = 0; p < kSmokeInstanceCount && emitCount > 0; ++p) {
         if (smokeParticles_[p].currentTime >= smokeParticles_[p].lifeTime) {
@@ -2084,18 +2084,18 @@ void ParticleManager::EmitBossSmoke(const Vector3& emitterPos, int count) {
             smokeParticles_[p].type = Particle::Type::kBillboard;
             smokeParticles_[p].position = {
                 emitterPos.x + distJitter(randomEngine_),
-                emitterPos.y + dist01(randomEngine_) * 3.0f,
+                emitterPos.y + dist01(randomEngine_) * 1.5f,
                 emitterPos.z + distJitter(randomEngine_)
             };
-            // 上方向へもくもく立ち昇る煙速度
+            // 各パーツから細く上方向へ立ち昇る煙速度
             smokeParticles_[p].velocity = {
-                (dist01(randomEngine_) - 0.5f) * 14.0f,
-                22.0f + dist01(randomEngine_) * 16.0f,
-                (dist01(randomEngine_) - 0.5f) * 14.0f
+                (dist01(randomEngine_) - 0.5f) * 6.0f,
+                16.0f + dist01(randomEngine_) * 10.0f,
+                (dist01(randomEngine_) - 0.5f) * 6.0f
             };
 
-            float startSc = 8.0f + dist01(randomEngine_) * 4.0f;
-            float endSc   = 24.0f + dist01(randomEngine_) * 10.0f;
+            float startSc = 2.2f + dist01(randomEngine_) * 1.3f;
+            float endSc   = 6.5f + dist01(randomEngine_) * 3.0f;
             smokeParticles_[p].startScale = startSc;
             smokeParticles_[p].endScale = endSc;
             smokeParticles_[p].scale = { startSc, startSc, startSc };

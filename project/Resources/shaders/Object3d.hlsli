@@ -49,7 +49,7 @@ struct DirectionalLight
     uint32_t numStreetLamps;
     float32_t4 streetLampPositions[16];
     float32_t3 streetLampColor;
-    float32_t lampPad;
+    float32_t emissiveIntensity;
 };
 
 // スキニングデータ
