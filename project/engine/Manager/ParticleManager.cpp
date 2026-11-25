@@ -435,7 +435,8 @@ void ParticleManager::Update(
 
         float fadeIn = std::clamp(tNorm / 0.12f, 0.0f, 1.0f);
         float fadeOut = std::pow(1.0f - tNorm, 1.25f);
-        smokeParticles_[i].color.w = 0.55f * fadeIn * fadeOut;
+        float maxAlpha = (smokeParticles_[i].effectType == 64) ? 0.38f : 0.88f;
+        smokeParticles_[i].color.w = maxAlpha * fadeIn * fadeOut;
 
         Matrix4x4 scaleMat = Matrix4x4MakeScaleMatrix(finalScale);
         Matrix4x4 worldMatrix = Multiply(scaleMat, billboardMatrix);
@@ -1837,13 +1838,13 @@ void ParticleManager::EmitFirework(const Vector3& emitterPos, const Vector3& col
         // 変色牡丹：鮮やかな発色から終盤にかけて別色へ変色し、キラキラ瞬く
         emitSphereLayer(150, 21.0f, 2.2f, 2.45f, 0.24f, 1.45f, 1.85f, 0.40f, 0.10f, color, coreColor, true, 28.0f);
     } else {
-        // 土星型二重輪：中心球 ＋ 傾いたリング状の星群
+        // 二重花輪：カメラ正面（XY平面）に大輪の花が広がる
         emitSphereLayer(80, 13.0f, 1.5f, 2.45f, 0.22f, 1.25f, 1.65f, 0.32f, 0.09f, coreColor, coreColor, false, 0.0f);
 
-        float tiltX = (dist01(randomEngine_) - 0.5f) * 0.9f;
-        float tiltZ = (dist01(randomEngine_) - 0.5f) * 0.9f;
+        float tiltX = (dist01(randomEngine_) - 0.5f) * 0.28f;
+        float tiltY = (dist01(randomEngine_) - 0.5f) * 0.28f;
         float cosX = std::cos(tiltX), sinX = std::sin(tiltX);
-        float cosZ = std::cos(tiltZ), sinZ = std::sin(tiltZ);
+        float cosY = std::cos(tiltY), sinY = std::sin(tiltY);
 
         int ringCount = 80;
         for (int n = 0; n < ringCount; ++n) {
@@ -1852,15 +1853,15 @@ void ParticleManager::EmitFirework(const Vector3& emitterPos, const Vector3& col
 
             float ang = (2.0f * kPi * static_cast<float>(n)) / static_cast<float>(ringCount) + distJitter(randomEngine_) * 0.3f;
             float rx = std::cos(ang);
-            float ry = distJitter(randomEngine_) * 0.25f;
-            float rz = std::sin(ang);
+            float ry = std::sin(ang);
+            float rz = distJitter(randomEngine_) * 0.18f;
 
-            // X軸・Z軸回転でリングを傾ける
+            // 正面(XY平面)をベースにごくわずかな立体傾きのみを加える
             float y1 = ry * cosX - rz * sinX;
             float z1 = ry * sinX + rz * cosX;
-            float x2 = rx * cosZ - y1 * sinZ;
-            float y2 = rx * sinZ + y1 * cosZ;
-            float z2 = z1;
+            float x2 = rx * cosY + z1 * sinY;
+            float y2 = y1;
+            float z2 = -rx * sinY + z1 * cosY;
 
             float spd = 23.5f + (dist01(randomEngine_) - 0.5f) * 1.8f;
 
@@ -2094,22 +2095,248 @@ void ParticleManager::EmitBossSmoke(const Vector3& emitterPos, int count) {
                 (dist01(randomEngine_) - 0.5f) * 6.0f
             };
 
-            float startSc = 2.2f + dist01(randomEngine_) * 1.3f;
-            float endSc   = 6.5f + dist01(randomEngine_) * 3.0f;
+            float startSc = 3.2f + dist01(randomEngine_) * 1.6f;
+            float endSc   = 8.5f + dist01(randomEngine_) * 4.0f;
             smokeParticles_[p].startScale = startSc;
             smokeParticles_[p].endScale = endSc;
             smokeParticles_[p].scale = { startSc, startSc, startSc };
 
             // 火事の煙のような濃い灰色〜黒灰色（通常アルファブレンドで描画）
-            smokeParticles_[p].startColor = { 0.30f, 0.29f, 0.28f };
-            smokeParticles_[p].endColor   = { 0.14f, 0.15f, 0.17f };
-            smokeParticles_[p].color = { 0.30f, 0.29f, 0.28f, 0.0f };
+            smokeParticles_[p].startColor = { 0.36f, 0.35f, 0.34f };
+            smokeParticles_[p].endColor   = { 0.18f, 0.19f, 0.21f };
+            smokeParticles_[p].color = { 0.36f, 0.35f, 0.34f, 0.0f };
             smokeParticles_[p].gravity = 0.0f;
             smokeParticles_[p].drag = 0.75f;
             smokeParticles_[p].lifeTime = 2.0f + dist01(randomEngine_) * 1.0f;
             smokeParticles_[p].currentTime = 0.0f;
             smokeParticles_[p].uvTransform = MakeIdentity4x4();
             emitCount--;
+        }
+    }
+}
+
+void ParticleManager::EmitColoredSmoke(
+    const Vector3& emitterPos,
+    int count,
+    const Vector3& startColor,
+    const Vector3& endColor,
+    float speed,
+    float scaleFactor,
+    float upwardBias,
+    float lifeScale,
+    float spreadRadius,
+    const Vector3& inheritVel
+) {
+    int emitCount = count;
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    const float kPi = 3.14159265f;
+
+    for (uint32_t p = 0; p < kSmokeInstanceCount && emitCount > 0; ++p) {
+        if (smokeParticles_[p].currentTime >= smokeParticles_[p].lifeTime) {
+            smokeParticles_[p] = {};
+            smokeParticles_[p].effectType = 64;
+            smokeParticles_[p].type = Particle::Type::kBillboard;
+
+            // 体や脚の表面を包むように球状範囲に分散配置
+            float posTheta = dist01(randomEngine_) * 2.0f * kPi;
+            float posPhi = std::acos(2.0f * dist01(randomEngine_) - 1.0f);
+            float posR = spreadRadius * std::cbrt(0.25f + 0.75f * dist01(randomEngine_));
+            smokeParticles_[p].position = {
+                emitterPos.x + std::sin(posPhi) * std::cos(posTheta) * posR,
+                emitterPos.y + std::cos(posPhi) * posR * 0.75f,
+                emitterPos.z + std::sin(posPhi) * std::sin(posTheta) * posR
+            };
+
+            float theta = dist01(randomEngine_) * 2.0f * kPi;
+            float phi = std::acos(2.0f * dist01(randomEngine_) - 1.0f);
+            float spd = speed * (0.55f + dist01(randomEngine_) * 0.75f);
+            smokeParticles_[p].velocity = {
+                inheritVel.x + std::sin(phi) * std::cos(theta) * spd,
+                inheritVel.y + std::cos(phi) * spd * 0.6f + upwardBias * (0.7f + dist01(randomEngine_) * 0.6f),
+                inheritVel.z + std::sin(phi) * std::sin(theta) * spd
+            };
+
+            float startSc = (2.6f + dist01(randomEngine_) * 1.4f) * scaleFactor;
+            float endSc   = (6.5f + dist01(randomEngine_) * 3.0f) * scaleFactor;
+            smokeParticles_[p].startScale = startSc;
+            smokeParticles_[p].endScale = endSc;
+            smokeParticles_[p].scale = { startSc, startSc, startSc };
+
+            smokeParticles_[p].startColor = startColor;
+            smokeParticles_[p].endColor   = endColor;
+            smokeParticles_[p].color = { startColor.x, startColor.y, startColor.z, 0.0f };
+            smokeParticles_[p].gravity = 0.0f;
+            smokeParticles_[p].drag = 0.25f;
+            smokeParticles_[p].lifeTime = (1.1f + dist01(randomEngine_) * 0.6f) * lifeScale;
+            smokeParticles_[p].currentTime = 0.0f;
+            smokeParticles_[p].uvTransform = MakeIdentity4x4();
+            emitCount--;
+        }
+    }
+}
+
+void ParticleManager::EmitMultiLayerExplosion(const Vector3& emitterPos, float scaleFactor) {
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    const float kPi = 3.14159265f;
+
+    uint32_t pSearch = 0;
+    auto allocParticle = [&]() -> Particle* {
+        for (uint32_t s = 0; s < kNumInstances; ++s) {
+            uint32_t idx = (pSearch + s) % kNumInstances;
+            if (particles_[idx].currentTime >= particles_[idx].lifeTime) {
+                pSearch = (idx + 1) % kNumInstances;
+                return &particles_[idx];
+            }
+        }
+        return nullptr;
+    };
+
+    uint32_t sSearch = 0;
+    auto allocSmoke = [&]() -> Particle* {
+        for (uint32_t s = 0; s < kSmokeInstanceCount; ++s) {
+            uint32_t idx = (sSearch + s) % kSmokeInstanceCount;
+            if (smokeParticles_[idx].currentTime >= smokeParticles_[idx].lifeTime) {
+                sSearch = (idx + 1) % kSmokeInstanceCount;
+                return &smokeParticles_[idx];
+            }
+        }
+        return nullptr;
+    };
+
+    // 1. 中心の白熱フラッシュ＋放射閃光線＋衝撃波リング
+    if (Particle* flash = allocParticle()) {
+        *flash = {};
+        flash->effectType = 62;
+        flash->type = Particle::Type::kBillboard;
+        flash->position = emitterPos;
+        flash->velocity = { 0.0f, 0.0f, 0.0f };
+        float sc = 8.5f * scaleFactor;
+        flash->startScale = sc;
+        flash->endScale = 1.0f * scaleFactor;
+        flash->scale = { sc, sc, sc };
+        flash->startColor = { 1.0f, 0.96f, 0.85f };
+        flash->endColor = { 1.0f, 0.45f, 0.08f };
+        flash->color = { 1.0f, 0.96f, 0.85f, 1.0f };
+        flash->gravity = 0.0f;
+        flash->drag = 0.0f;
+        flash->lifeTime = 0.22f;
+        flash->currentTime = 0.0f;
+        flash->uvTransform = MakeIdentity4x4();
+        flash->useFireworkCurve = true;
+    }
+    EmitSlash(emitterPos, 95.0f * scaleFactor, 10, { 1.0f, 0.78f, 0.38f });
+    EmitRing(emitterPos, { 1.0f, 0.38f, 0.08f });
+    // 中心〜放射状に広がる鮮やかな赤・オレンジの爆炎コア（煙を覆い隠さないよう個数を抑える）
+    EmitFlame(emitterPos, 24.0f * scaleFactor, 8, { 1.0f, 0.14f, 0.02f });
+    EmitFlame(emitterPos, 14.0f * scaleFactor, 6, { 1.0f, 0.42f, 0.04f });
+
+    // 2. 放射状に伸びる7本の「爆炎＋もこもこ黒煙」の火柱ストリーク
+    const int kNumRays = 7;
+    const int kStepsPerRay = 5;
+    for (int r = 0; r < kNumRays; ++r) {
+        float baseTheta = (2.0f * kPi * static_cast<float>(r)) / static_cast<float>(kNumRays) + (dist01(randomEngine_) - 0.5f) * 0.45f;
+        float elev = (dist01(randomEngine_) - 0.35f) * 1.15f; // やや上向き〜全方向へ放射
+        float cosE = std::cos(elev);
+        Vector3 rayDir = {
+            std::cos(baseTheta) * cosE,
+            std::sin(elev),
+            std::sin(baseTheta) * cosE
+        };
+
+        for (int st = 0; st < kStepsPerRay; ++st) {
+            float frac = static_cast<float>(st) / static_cast<float>(kStepsPerRay - 1); // 0:根元 ～ 1:先端
+            float speed = std::lerp(14.0f, 56.0f, frac) * scaleFactor;
+
+            // (A) 通常ブレンドのもこもこ煙（外周〜根元を立体的に覆う黒煙・焦げ茶煙）
+            if (Particle* sm = allocSmoke()) {
+                *sm = {};
+                sm->effectType = 63;
+                sm->type = Particle::Type::kBillboard;
+                sm->position = {
+                    emitterPos.x + rayDir.x * (1.2f * frac * scaleFactor),
+                    emitterPos.y + rayDir.y * (1.2f * frac * scaleFactor),
+                    emitterPos.z + rayDir.z * (1.2f * frac * scaleFactor)
+                };
+                sm->velocity = {
+                    rayDir.x * speed + (dist01(randomEngine_) - 0.5f) * 5.0f,
+                    rayDir.y * speed + 3.0f,
+                    rayDir.z * speed + (dist01(randomEngine_) - 0.5f) * 5.0f
+                };
+                float sStart = std::lerp(4.6f, 1.8f, frac) * scaleFactor;
+                float sEnd   = std::lerp(9.5f, 3.8f, frac) * scaleFactor;
+                sm->startScale = sStart;
+                sm->endScale = sEnd;
+                sm->scale = { sStart, sStart, sStart };
+                sm->startColor = { 0.45f - 0.16f * frac, 0.28f - 0.10f * frac, 0.18f };
+                sm->endColor   = { 0.16f, 0.16f, 0.18f };
+                sm->color = { sm->startColor.x, sm->startColor.y, sm->startColor.z, 0.0f };
+                sm->gravity = 0.0f;
+                sm->drag = 2.4f;
+                sm->lifeTime = 0.85f + (1.0f - frac) * 0.45f + dist01(randomEngine_) * 0.20f;
+                sm->currentTime = 0.0f;
+                sm->uvTransform = MakeIdentity4x4();
+            }
+
+            // (B) 加算合成の赤い爆炎コア（煙より一回り小さくして、外側の煙と内側の赤い炎が両方くっきり見えるようにする）
+            if (Particle* fl = allocParticle()) {
+                *fl = {};
+                fl->effectType = 62;
+                fl->type = Particle::Type::kBillboard;
+                fl->position = {
+                    emitterPos.x + rayDir.x * (0.9f * frac * scaleFactor),
+                    emitterPos.y + rayDir.y * (0.9f * frac * scaleFactor),
+                    emitterPos.z + rayDir.z * (0.9f * frac * scaleFactor)
+                };
+                fl->velocity = {
+                    rayDir.x * (speed * 0.95f),
+                    rayDir.y * (speed * 0.95f),
+                    rayDir.z * (speed * 0.95f)
+                };
+                float fStart = std::lerp(2.7f, 0.95f, frac) * scaleFactor;
+                float fEnd   = std::lerp(4.2f, 1.50f, frac) * scaleFactor;
+                fl->startScale = fStart;
+                fl->endScale = fEnd;
+                fl->scale = { fStart, fStart, fStart };
+                fl->startColor = { 1.0f, std::lerp(0.55f, 0.18f, frac), std::lerp(0.14f, 0.02f, frac) };
+                fl->endColor   = { 0.92f, 0.04f, 0.01f };
+                fl->color = { fl->startColor.x, fl->startColor.y, fl->startColor.z, 1.0f };
+                fl->gravity = 0.0f;
+                fl->drag = 2.7f;
+                fl->lifeTime = 0.42f + (1.0f - frac) * 0.28f;
+                fl->currentTime = 0.0f;
+                fl->uvTransform = MakeIdentity4x4();
+                fl->useFireworkCurve = true;
+            }
+        }
+    }
+
+    // 3. 周囲に飛び散る細かい塵・火の粉
+    EmitCustomSparks(emitterPos, 115.0f * scaleFactor, 24, { 1.0f, 0.76f, 0.28f }, 1.8f);
+    for (int d = 0; d < 12; ++d) {
+        if (Particle* dust = allocSmoke()) {
+            *dust = {};
+            dust->effectType = 63;
+            dust->type = Particle::Type::kBillboard;
+            dust->position = emitterPos;
+            float th = dist01(randomEngine_) * 2.0f * kPi;
+            float el = (dist01(randomEngine_) - 0.4f) * kPi * 0.6f;
+            float sp = (25.0f + dist01(randomEngine_) * 35.0f) * scaleFactor;
+            dust->velocity = {
+                std::cos(th) * std::cos(el) * sp,
+                std::sin(el) * sp,
+                std::sin(th) * std::cos(el) * sp
+            };
+            dust->startScale = 0.45f * scaleFactor;
+            dust->endScale = 0.85f * scaleFactor;
+            dust->scale = { dust->startScale, dust->startScale, dust->startScale };
+            dust->startColor = { 0.35f, 0.30f, 0.26f };
+            dust->endColor = { 0.14f, 0.14f, 0.16f };
+            dust->color = { 0.35f, 0.30f, 0.26f, 0.0f };
+            dust->gravity = 0.3f;
+            dust->drag = 1.6f;
+            dust->lifeTime = 0.65f + dist01(randomEngine_) * 0.45f;
+            dust->currentTime = 0.0f;
+            dust->uvTransform = MakeIdentity4x4();
         }
     }
 }

@@ -125,6 +125,80 @@ PixelShaderOutput main(VertexShaderOutput input)
             float32_t eyeDim = lerp(1.0f, 0.08f, (1.0f - eyePower) * redness);
             textureColor.rgb *= eyeDim;
         }
+        else if (gDirectionalLight.enableNightEmissive == 4u)
+        {
+            // 道路・地面用：巨大ボスの歩行によるひび割れ＆陥没（streetLampPositions[8..15] に xyz=中心, w=半径）
+            float32_t maxCrack = 0.0f;
+            float32_t maxCrackEdge = 0.0f;
+            float32_t centerDent = 0.0f;
+            float2 totalNormalOffset = float2(0.0f, 0.0f);
+            float32_t rimHeight = 0.0f;
+
+            float32_t3 viewDirW = normalize(gCamera.worldPosition - input.worldPosition);
+            float2 lightDirXZ = normalize(float2(0.35f, -0.65f));
+
+            for (uint32_t ci = 8u; ci < 16u; ++ci)
+            {
+                float32_t4 crack = gDirectionalLight.streetLampPositions[ci];
+                if (crack.w <= 0.1f) continue;
+                float2 rawDXZ = input.worldPosition.xz - crack.xz;
+                float rawDistSq = dot(rawDXZ, rawDXZ);
+                if (rawDistSq >= crack.w * crack.w) continue;
+
+                float rawDist = sqrt(rawDistSq);
+                float rawNormR = rawDist / crack.w;
+
+                // すり鉢状の凹み深度プロファイル（軽く自然な凹み）
+                float32_t bowl = pow(saturate(1.0f - rawNormR / 0.58f), 1.6f);
+                float32_t rim = sin(saturate((rawNormR - 0.52f) / 0.42f) * 3.14159265f) * 0.10f;
+
+                // 視線方向に応じたごく軽い擬似パララックス
+                float2 dXZ = rawDXZ - viewDirW.xz * (bowl * 0.35f);
+                float dist = length(dXZ);
+                float normR = saturate(dist / crack.w);
+                float angle = atan2(dXZ.y, dXZ.x);
+
+                float jitter1 = sin(input.worldPosition.x * 0.45f + input.worldPosition.z * 0.37f) * 0.28f;
+                float jitter2 = cos(input.worldPosition.x * 1.15f - input.worldPosition.z * 0.95f) * 0.14f;
+                float spoke = abs(sin((angle + jitter1 + jitter2) * 4.5f + crack.x * 0.13f));
+                float ringCrack = abs(sin(normR * 10.5f + jitter1 * 3.2f));
+
+                float mainLine = 1.0f - smoothstep(0.02f, 0.15f + normR * 0.10f, spoke);
+                float subLine = (1.0f - smoothstep(0.02f, 0.11f, ringCrack)) * 0.60f;
+                float fadeOut = 1.0f - smoothstep(0.35f, 1.0f, normR);
+
+                float32_t crackVal = saturate((mainLine + subLine) * fadeOut);
+                maxCrack = max(maxCrack, crackVal);
+
+                // ひびの縁（少し外側の欠け・ベベルハイライト用）
+                float edgeMask = saturate((1.0f - smoothstep(0.12f, 0.28f + normR * 0.10f, spoke)) - mainLine) * fadeOut;
+                maxCrackEdge = max(maxCrackEdge, edgeMask);
+
+                // 中心部の軽い影（環境遮蔽）
+                centerDent = max(centerDent, bowl * 0.24f);
+                rimHeight = max(rimHeight, rim);
+
+                // 斜面の法線傾き（軽く凹んだ陰影）
+                if (rawDist > 0.001f)
+                {
+                    float2 radialDir = rawDXZ / rawDist;
+                    float32_t innerSlope = -smoothstep(0.0f, 0.45f, rawNormR) * (1.0f - smoothstep(0.45f, 0.72f, rawNormR));
+                    float32_t outerSlope = (1.0f - smoothstep(0.65f, 0.95f, rawNormR)) * smoothstep(0.55f, 0.72f, rawNormR) * 0.25f;
+                    totalNormalOffset += radialDir * (innerSlope * 0.45f + outerSlope);
+                }
+            }
+            if (maxCrack > 0.001f || centerDent > 0.001f || rimHeight > 0.001f)
+            {
+                // クレーター斜面の陰影計算（軽く立体感が出る程度）
+                float32_t slopeLit = dot(totalNormalOffset, lightDirXZ);
+                float32_t shadeFactor = saturate(1.0f + slopeLit * 0.32f + rimHeight * 0.12f - centerDent);
+                textureColor.rgb *= shadeFactor;
+
+                // 欠けたひびの縁をわずかに明るくし、ひびの溝の中を暗く落とす
+                textureColor.rgb = lerp(textureColor.rgb, textureColor.rgb * 1.15f + float32_t3(0.015f, 0.015f, 0.02f), maxCrackEdge * 0.25f);
+                textureColor.rgb = lerp(textureColor.rgb, float32_t3(0.018f, 0.018f, 0.024f), maxCrack * 0.92f);
+            }
+        }
 
         output.color.rgb = textureColor.rgb * gMaterial.color.rgb * lightingColor + nightEmissive;
         output.color.a = textureColor.a * gMaterial.color.a;
