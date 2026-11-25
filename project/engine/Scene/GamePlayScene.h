@@ -563,6 +563,7 @@ private:
     float cameraShake_ = 0.0f;
     bool isBossLanded_ = false;
     bool isBossRoared_ = false;
+    bool hasEmittedRoarSlam_ = false;
     bool hasEmittedJumpStart_ = false;
     bool hasEmittedJumpEnd_ = false;
 
@@ -592,6 +593,13 @@ private:
     TransformationMatrix* bossLegTransformData_[8] = { nullptr };
     Microsoft::WRL::ComPtr<ID3D12Resource> bossLightResource_;
     DirectionalLight* bossLightData_ = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> floorLightResource_;
+    DirectionalLight* floorLightData_ = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> enemyLightResource_;
+    DirectionalLight* enemyLightData_ = nullptr;
+    float enemyFlapTime_ = 0.0f;
+    Vector4 floorCracks_[8] = {};
+    int floorCrackWriteIdx_ = 0;
 
     // 蜘蛛ボス調整パラメータ (ImGuiで調整可能)
     float bossScale_ = 4.5f;           // 全体の基本スケール

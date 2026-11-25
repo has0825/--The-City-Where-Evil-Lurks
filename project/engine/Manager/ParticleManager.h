@@ -121,6 +121,8 @@ public:
         float spreadRadius = 2.5f,
         const Vector3& inheritVel = { 0.0f, 0.0f, 0.0f }
     );
+    void BlowAwaySmoke(const Vector3& origin, float pushSpeed = 85.0f);
+    void EmitRoarDroplets(const Vector3& mouthPos, const Vector3& forwardDir, int count = 14);
     void EmitMultiLayerExplosion(const Vector3& emitterPos, float scaleFactor = 1.0f);
     void EmitLSystemLightning(const Vector3& startPos, const Vector3& endPos, int depth, float scale, const Vector3& color);
 

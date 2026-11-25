@@ -18,6 +18,7 @@ struct VertexShaderInput
 };
 
 ConstantBuffer<SkinningPalette> gSkinningPalette : register(b4);
+ConstantBuffer<DirectionalLight> gDirectionalLight : register(b2);
 
 VertexShaderOutput main(VertexShaderInput input)
 {
@@ -36,6 +37,30 @@ VertexShaderOutput main(VertexShaderInput input)
                 skinnedPosition += mul(input.position, gSkinningPalette.boneMatrices[input.jointIndices[i]]) * input.jointWeights[i];
                 skinnedNormal += mul(input.normal, (float32_t3x3)gSkinningPalette.boneMatrices[input.jointIndices[i]]) * input.jointWeights[i];
             }
+        }
+    }
+
+    // 雑魚敵（little spider）の羽ばたき頂点アニメーション
+    if (gDirectionalLight.enableNightEmissive == 5u)
+    {
+        float32_t wingX = saturate((abs(skinnedPosition.x) - 0.11f) / 0.30f);
+        float32_t wingY = saturate((skinnedPosition.y - 0.15f) / 0.15f);
+        float32_t wingMask = wingX * wingY;
+        if (wingMask > 0.001f)
+        {
+            float32_t flap = sin(gDirectionalLight.emissiveIntensity * 30.0f);
+            float32_t sideSign = (skinnedPosition.x >= 0.0f) ? 1.0f : -1.0f;
+            float32_t angle = flap * 0.52f * wingMask * sideSign;
+            float32_t px = skinnedPosition.x - sideSign * 0.11f;
+            float32_t py = skinnedPosition.y - 0.22f;
+            float32_t c = cos(angle);
+            float32_t s = sin(angle);
+            skinnedPosition.x = sideSign * 0.11f + px * c - py * s;
+            skinnedPosition.y = 0.22f + px * s + py * c;
+            float32_t nx = skinnedNormal.x;
+            float32_t ny = skinnedNormal.y;
+            skinnedNormal.x = nx * c - ny * s;
+            skinnedNormal.y = nx * s + ny * c;
         }
     }
 

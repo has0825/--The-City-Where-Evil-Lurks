@@ -2175,6 +2175,96 @@ void ParticleManager::EmitColoredSmoke(
     }
 }
 
+void ParticleManager::BlowAwaySmoke(const Vector3& origin, float pushSpeed) {
+    for (uint32_t p = 0; p < kSmokeInstanceCount; ++p) {
+        if (smokeParticles_[p].currentTime < smokeParticles_[p].lifeTime && smokeParticles_[p].effectType == 63) {
+            Vector3 diff = {
+                smokeParticles_[p].position.x - origin.x,
+                smokeParticles_[p].position.y - origin.y,
+                smokeParticles_[p].position.z - origin.z
+            };
+            float len = std::sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
+            Vector3 dir = (len > 0.001f)
+                ? Vector3{ diff.x / len, (std::max)(0.15f, diff.y / len), diff.z / len }
+                : Vector3{ 0.0f, 0.4f, -1.0f };
+            smokeParticles_[p].velocity.x += dir.x * pushSpeed;
+            smokeParticles_[p].velocity.y += dir.y * pushSpeed * 0.45f;
+            smokeParticles_[p].velocity.z += dir.z * pushSpeed;
+            // 吹き飛びながら素早く晴れるよう寿命を短縮
+            float remain = smokeParticles_[p].lifeTime - smokeParticles_[p].currentTime;
+            if (remain > 0.45f) {
+                smokeParticles_[p].lifeTime = smokeParticles_[p].currentTime + 0.45f;
+            }
+        }
+    }
+}
+
+void ParticleManager::EmitRoarDroplets(const Vector3& mouthPos, const Vector3& forwardDir, int count) {
+    int emitCount = count;
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    std::uniform_real_distribution<float> distSpread(-0.55f, 0.55f);
+    std::uniform_real_distribution<float> distUp(-0.15f, 0.38f);
+
+    // forwardDir に直交する基底を作成
+    Vector3 fwd = forwardDir;
+    float fLen = std::sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z);
+    if (fLen > 0.001f) {
+        fwd = { fwd.x / fLen, fwd.y / fLen, fwd.z / fLen };
+    } else {
+        fwd = { 0.0f, 0.0f, -1.0f };
+    }
+    Vector3 right = { -fwd.z, 0.0f, fwd.x };
+    float rLen = std::sqrt(right.x * right.x + right.z * right.z);
+    if (rLen > 0.001f) {
+        right = { right.x / rLen, 0.0f, right.z / rLen };
+    } else {
+        right = { 1.0f, 0.0f, 0.0f };
+    }
+    Vector3 up = { 0.0f, 1.0f, 0.0f };
+
+    for (uint32_t p = 0; p < kNumInstances && emitCount > 0; ++p) {
+        if (particles_[p].currentTime >= particles_[p].lifeTime) {
+            particles_[p] = MakeNewParticle(4, mouthPos, 0.0f, { 0, 0, 0 }, false);
+            particles_[p].type = Particle::Type::kBillboard;
+
+            float sx = distSpread(randomEngine_);
+            float sy = distUp(randomEngine_);
+            Vector3 dir = {
+                fwd.x + right.x * sx + up.x * sy,
+                fwd.y + right.y * sx + up.y * sy,
+                fwd.z + right.z * sx + up.z * sy
+            };
+            float dLen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+            if (dLen > 0.001f) {
+                dir = { dir.x / dLen, dir.y / dLen, dir.z / dLen };
+            }
+
+            float spd = 55.0f + dist01(randomEngine_) * 45.0f;
+            particles_[p].position = {
+                mouthPos.x + distSpread(randomEngine_) * 2.0f,
+                mouthPos.y + distSpread(randomEngine_) * 1.2f,
+                mouthPos.z + distSpread(randomEngine_) * 2.0f
+            };
+            particles_[p].velocity = { dir.x * spd, dir.y * spd, dir.z * spd };
+            particles_[p].gravity = 2.8f + dist01(randomEngine_) * 1.2f;
+            particles_[p].lifeTime = 0.35f + dist01(randomEngine_) * 0.25f;
+            particles_[p].currentTime = 0.0f;
+
+            // 目立ちすぎない細長い線状の飛沫（淡い白系）
+            float lenSc = 1.6f + dist01(randomEngine_) * 1.4f;
+            particles_[p].scale = { 0.055f, lenSc, 0.055f };
+            particles_[p].rotate = { 0.0f, 0.0f, sx * 0.85f };
+            particles_[p].color = {
+                0.28f + dist01(randomEngine_) * 0.08f,
+                0.29f + dist01(randomEngine_) * 0.08f,
+                0.31f + dist01(randomEngine_) * 0.08f,
+                0.42f
+            };
+            emitCount--;
+        }
+    }
+}
+
 void ParticleManager::EmitMultiLayerExplosion(const Vector3& emitterPos, float scaleFactor) {
     std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
     const float kPi = 3.14159265f;

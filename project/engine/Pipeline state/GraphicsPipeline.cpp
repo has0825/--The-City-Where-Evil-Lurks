@@ -346,7 +346,7 @@ void GraphicsPipeline::Initialize(ID3D12Device* device) {
 
 	// [4] 平行光源 DirectionalLight (b2, PIXELシェーダー用)
 	obj3dParams[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-	obj3dParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	obj3dParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	obj3dParams[4].Descriptor.ShaderRegister = 2;
 
 	// [5] カメラ座標 Camera (b3, PIXELシェーダー用)
